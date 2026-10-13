@@ -1,0 +1,5 @@
+build/
+*.o
+.DS_Store
+Resources/AppIcon.iconset/
+*.zip
