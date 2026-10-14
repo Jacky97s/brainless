@@ -111,9 +111,32 @@ final class DictionaryStore: ObservableObject {
         for w in words { if s.count + w.count > 200 { break }; s += (s.isEmpty ? "" : "、") + w }
         return s.isEmpty ? "" : " 專有名詞：\(s)。"
     }
-    /// 給 Qwen 的補充規則
-    var llmHint: String {
+    /// 給 Qwen 的補充規則：固定帶前 30 個核心詞，再挑出跟這段逐字稿相關的詞（最多 80 個）
+    func llmHint(for transcript: String) -> String {
         guard !words.isEmpty else { return "" }
-        return "\n\n使用者的專有名詞清單（逐字稿若出現同音、相近或拼錯的寫法，一律改成清單裡的寫法）：\(words.prefix(200).joined(separator: "、"))"
+        let core = Array(words.prefix(30))
+        let lower = transcript.lowercased()
+        let latinTokens = Set(lower.split(whereSeparator: { !$0.isLetter }).map { String($0.prefix(3)) }.filter { $0.count == 3 })
+        var bigrams = Set<String>()
+        let han = Array(transcript.unicodeScalars.filter { $0.properties.isIdeographic }.map { Character($0) })
+        if han.count >= 2 { for i in 0..<(han.count - 1) { bigrams.insert(String(han[i...i+1])) } }
+        var related: [String] = []
+        for w in words.dropFirst(30) {
+            if related.count >= 80 { break }
+            let wl = w.lowercased()
+            var hit = false
+            for tok in wl.split(whereSeparator: { !$0.isLetter }) where tok.count >= 3 {
+                if latinTokens.contains(String(tok.prefix(3))) { hit = true; break }
+            }
+            if !hit {
+                let wh = Array(w.unicodeScalars.filter { $0.properties.isIdeographic }.map { Character($0) })
+                if wh.count >= 2 {
+                    for i in 0..<(wh.count - 1) where bigrams.contains(String(wh[i...i+1])) { hit = true; break }
+                }
+            }
+            if hit { related.append(w) }
+        }
+        let list = (core + related).joined(separator: "、")
+        return "\n\n使用者的專有名詞清單（逐字稿若出現同音、相近或拼錯的寫法，一律改成清單裡的寫法；清單裡沒出現在逐字稿的詞不要硬塞進去）：\(list)"
     }
 }

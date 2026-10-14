@@ -418,14 +418,14 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func systemPrompt(for mode: Mode) -> String {
+    private func systemPrompt(for mode: Mode, transcript: String) -> String {
         let base: String
         switch mode {
         case .dictate: base = Prompts.dictateSystem
         case .translate: base = Prompts.translateSystem(target: settings.translateTarget)
         case .ask: base = Prompts.askSystem
         }
-        return base + dict.llmHint + (settings.language == .yue ? Prompts.cantoneseHint : "")
+        return base + dict.llmHint(for: transcript) + (settings.language == .yue ? Prompts.cantoneseHint : "")
     }
 
     private func afterTranscript(_ text: String, mode: Mode, selection: String?, seconds: Double) {
@@ -447,7 +447,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         case .dictate, .translate: user = Prompts.transcriptUser(text)
         case .ask: user = Prompts.askUser(selected: selection, command: text)
         }
-        ollama.chat(system: systemPrompt(for: mode), user: user) { [weak self] result in
+        ollama.chat(system: systemPrompt(for: mode, transcript: text), user: user) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 switch result {
@@ -492,7 +492,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         guard ollamaStatus == .ready else { return }
         let mode = Mode(rawValue: item.mode) ?? .dictate
         overlay.show(.refining)
-        ollama.chat(system: systemPrompt(for: mode), user: mode == .ask ? item.raw : Prompts.transcriptUser(item.raw)) { [weak self] result in
+        ollama.chat(system: systemPrompt(for: mode, transcript: item.raw), user: mode == .ask ? item.raw : Prompts.transcriptUser(item.raw)) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 switch result {
