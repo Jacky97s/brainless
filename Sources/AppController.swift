@@ -80,6 +80,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        recorder.stopCapturing()
         whisper.stop()
         hotkey.stop()
     }
@@ -454,6 +455,22 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private var micSleepTimer: Timer?
+    private var micRetryTimer: Timer?
+
+    /// 常駐模式下麥克風暫時不見（USB 休眠、拔插）時，每 10 秒再試一次
+    private func scheduleStandbyRetry() {
+        micRetryTimer?.invalidate()
+        micRetryTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] t in
+            guard let self = self else { t.invalidate(); return }
+            guard self.settings.micKeepAlive != .off, !self.recorder.isCapturing, self.state == .idle else { return }
+            do {
+                try self.recorder.ensureCapturing()
+                Log.w("standby capture recovered")
+                t.invalidate()
+                self.syncHub()
+            } catch {}
+        }
+    }
 
     /// 依設定決定聽寫結束後麥克風通道要不要繼續開著
     private func applyMicKeepAlive() {
@@ -462,11 +479,17 @@ final class AppController: NSObject, NSApplicationDelegate {
         switch settings.micKeepAlive {
         case .always:
             if !recorder.isCapturing {
-                do { try recorder.ensureCapturing() } catch { Log.w("standby capture failed: \(error.localizedDescription)") }
+                do { try recorder.ensureCapturing() } catch {
+                    Log.w("standby capture failed: \(error.localizedDescription)")
+                    scheduleStandbyRetry()
+                }
             }
         case .tenMinutes:
             if !recorder.isCapturing {
-                do { try recorder.ensureCapturing() } catch { Log.w("standby capture failed: \(error.localizedDescription)") }
+                do { try recorder.ensureCapturing() } catch {
+                    Log.w("standby capture failed: \(error.localizedDescription)")
+                    scheduleStandbyRetry()
+                }
             }
             micSleepTimer = Timer.scheduledTimer(withTimeInterval: 600, repeats: false) { [weak self] _ in
                 guard let self = self, self.state == .idle else { return }
