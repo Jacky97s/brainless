@@ -3,7 +3,7 @@ import Combine
 
 enum AppInfo {
     static let name = "Brainless"
-    static let version = "1.0.2"
+    static let version = "1.0.3"
 }
 
 struct HistoryItem: Codable, Identifiable, Equatable {

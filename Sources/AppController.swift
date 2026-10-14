@@ -405,14 +405,23 @@ final class AppController: NSObject, NSApplicationDelegate {
         overlay.show(.refining)
         let user: String
         switch mode {
-        case .dictate, .translate: user = text
+        case .dictate, .translate: user = Prompts.transcriptUser(text)
         case .ask: user = Prompts.askUser(selected: selection, command: text)
         }
         ollama.chat(system: systemPrompt(for: mode), user: user) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 switch result {
-                case .success(let out):
+                case .success(var out):
+                    for tag in ["【逐字稿】", "逐字稿：", "輸出「", "輸出："] {
+                        if out.hasPrefix(tag) { out = String(out.dropFirst(tag.count)).trimmingCharacters(in: .whitespacesAndNewlines) }
+                    }
+                    if mode == .dictate && Prompts.looksLikeReply(raw: text, out: out) {
+                        Log.w("llm reply suspected (\(text.count) -> \(out.count) chars), using raw transcript")
+                        self.overlay.show(.info("Qwen 想回話，改貼原文"))
+                        self.insert(text, raw: text, mode: mode, seconds: seconds)
+                        return
+                    }
                     self.insert(out.isEmpty ? text : out, raw: text, mode: mode, seconds: seconds)
                 case .failure(let e):
                     Log.w("ollama failed: \(e)")
@@ -444,7 +453,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         guard ollamaStatus == .ready else { return }
         let mode = Mode(rawValue: item.mode) ?? .dictate
         overlay.show(.refining)
-        ollama.chat(system: systemPrompt(for: mode), user: item.raw) { [weak self] result in
+        ollama.chat(system: systemPrompt(for: mode), user: mode == .ask ? item.raw : Prompts.transcriptUser(item.raw)) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 switch result {
