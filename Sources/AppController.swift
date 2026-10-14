@@ -11,6 +11,8 @@ enum TextCleaner {
         if let h = t.applyingTransform(StringTransform(rawValue: "Hans-Hant"), reverse: false) { t = h }
         // 粵語輸出常在字與字之間夾空格，收掉中文字之間的空格
         t = t.replacingOccurrences(of: #"(?<=[\p{Han}，。！？、：；「」（）])\s+(?=[\p{Han}，。！？、：；「」（）])"#, with: "", options: .regularExpression)
+        // 同一句連續重複好幾次（Whisper 幻覺）只留一次
+        t = t.replacingOccurrences(of: #"(.{4,60}?)(?:[\s，,。！？?!]*\1){1,}"#, with: "$1", options: .regularExpression)
         let hallucinations = ["謝謝觀看", "謝謝收看", "請不吝點讚", "請不吝點贊", "點讚訂閱", "字幕由", "字幕提供", "Amara.org", "明鏡", "訂閱我的頻道"]
         if t.count <= 16, hallucinations.contains(where: { t.contains($0) }) { return "" }
         t = t.replacingOccurrences(of: #"[ \t]+"#, with: " ", options: .regularExpression)
@@ -131,6 +133,13 @@ final class AppController: NSObject, NSApplicationDelegate {
         hub.onSetMicKeepAlive = { [weak self] k in self?.setMicKeepAlive(k) }
         hub.onSetKeepModelLoaded = { [weak self] v in self?.setKeepModelLoaded(v) }
         hub.onSetFastWhisper = { [weak self] v in self?.settings.fastWhisper = v; self?.afterSettingsChange() }
+        hub.onToggleAllowedLanguage = { [weak self] name in
+            guard let self = self else { return }
+            var a = self.settings.allowedLanguages
+            if let i = a.firstIndex(of: name) { a.remove(at: i) } else { a.append(name) }
+            self.settings.allowedLanguages = a
+            self.afterSettingsChange()
+        }
         hub.onToggleLogin = { [weak self] in self?.toggleLogin() }
         hub.onRestartEngines = { [weak self] in self?.restartEngines() }
         hub.onOpenLogs = { [weak self] in self?.openLogs() }
@@ -182,6 +191,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         hub.micKeepAlive = settings.micKeepAlive
         hub.keepModelLoaded = settings.keepModelLoaded
         hub.fastWhisper = settings.fastWhisper
+        hub.allowedLanguages = settings.allowedLanguages
         hub.micStandby = recorder.isCapturing
         hub.micName = AudioRecorder.defaultInputName()
     }
@@ -358,16 +368,40 @@ final class AppController: NSObject, NSApplicationDelegate {
         let run: (String?) -> Void = { [weak self] selection in
             guard let self = self else { return }
             let ctx = self.settings.fastWhisper ? WhisperServer.audioContext(forSeconds: seconds) : nil
+            let finish: (String) -> Void = { raw in
+                try? FileManager.default.removeItem(at: rec.url)
+                let text = TextCleaner.clean(raw)
+                if text.isEmpty { self.fail("沒有辨識出文字"); return }
+                self.afterTranscript(text, mode: mode, selection: selection, seconds: seconds)
+            }
             self.whisper.transcribe(wav: rec.url, language: lang.whisperCode, prompt: prompt.isEmpty ? nil : prompt, audioContext: ctx) { result in
                 DispatchQueue.main.async {
-                    try? FileManager.default.removeItem(at: rec.url)
                     switch result {
                     case .failure(let e):
+                        try? FileManager.default.removeItem(at: rec.url)
                         self.fail("辨識失敗：\(e.localizedDescription)")
-                    case .success(let raw):
-                        let text = TextCleaner.clean(raw)
-                        if text.isEmpty { self.fail("沒有辨識出文字"); return }
-                        self.afterTranscript(text, mode: mode, selection: selection, seconds: seconds)
+                    case .success(let r):
+                        let allowed = self.settings.allowedLanguages
+                        if lang == .auto, let det = r.language, !allowed.isEmpty, !allowed.contains(det) {
+                            let code = self.settings.primaryLanguageCode
+                            Log.w("detected '\(det)' not in allowed list, retrying as \(code)")
+                            self.overlay.show(.transcribing)
+                            var p2 = code == "zh" ? Prompts.whisperZhPrompt : (code == "yue" ? Prompts.whisperYuePrompt : "")
+                            p2 += self.dict.whisperHint
+                            self.whisper.transcribe(wav: rec.url, language: code, prompt: p2.isEmpty ? nil : p2, audioContext: ctx) { r2 in
+                                DispatchQueue.main.async {
+                                    switch r2 {
+                                    case .failure(let e):
+                                        try? FileManager.default.removeItem(at: rec.url)
+                                        self.fail("辨識失敗：\(e.localizedDescription)")
+                                    case .success(let rr):
+                                        finish(rr.text)
+                                    }
+                                }
+                            }
+                            return
+                        }
+                        finish(r.text)
                     }
                 }
             }

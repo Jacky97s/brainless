@@ -492,6 +492,15 @@ struct SettingsPage: View {
                         }
                     }
                     Text("講中英夾雜建議用自動偵測。").font(.system(size: 12)).foregroundColor(.secondary)
+                    Divider()
+                    Text("自動偵測只接受這些語言").font(.system(size: 13, weight: .medium))
+                    FlowLayout(spacing: 8) {
+                        ForEach(Settings.languageChoices, id: \.name) { c in
+                            ChoiceChip(text: c.title, selected: model.allowedLanguages.contains(c.name)) { model.onToggleAllowedLanguage?(c.name) }
+                        }
+                    }
+                    Text("Whisper 每段錄音只會猜一種語言。猜到名單外的語言（例如印地語）就自動用主要語言重辨一次。一句話裡同時混好幾種語言目前辨識不好，一次講一種最準。")
+                        .font(.system(size: 12)).foregroundColor(.secondary)
                 }
                 section("麥克風保持喚醒") {
                     HStack(spacing: 8) {

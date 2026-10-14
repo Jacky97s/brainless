@@ -27,6 +27,7 @@ final class HubModel: ObservableObject {
     @Published var micKeepAlive: MicKeepAlive = .always
     @Published var keepModelLoaded = true
     @Published var fastWhisper = false
+    @Published var allowedLanguages: [String] = ["chinese", "english"]
     @Published var micStandby = false
     @Published var micName = ""
     @Published var whisperModelPresent = true
@@ -48,6 +49,7 @@ final class HubModel: ObservableObject {
     var onSetMicKeepAlive: ((MicKeepAlive) -> Void)?
     var onSetKeepModelLoaded: ((Bool) -> Void)?
     var onSetFastWhisper: ((Bool) -> Void)?
+    var onToggleAllowedLanguage: ((String) -> Void)?
     var onToggleLogin: (() -> Void)?
     var onRestartEngines: (() -> Void)?
     var onOpenLogs: (() -> Void)?

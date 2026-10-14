@@ -129,7 +129,12 @@ final class WhisperServer {
         min(1500, max(512, Int(s * 50) + 256))
     }
 
-    func transcribe(wav: URL, language: String, prompt: String?, audioContext: Int? = nil, completion: @escaping (Swift.Result<String, Error>) -> Void) {
+    struct Transcript {
+        let text: String
+        let language: String?
+    }
+
+    func transcribe(wav: URL, language: String, prompt: String?, audioContext: Int? = nil, completion: @escaping (Swift.Result<Transcript, Error>) -> Void) {
         guard let data = try? Data(contentsOf: wav) else {
             completion(.failure(NSError(domain: "Whispry", code: 2, userInfo: [NSLocalizedDescriptionKey: "讀不到錄音檔"])))
             return
@@ -142,7 +147,7 @@ final class WhisperServer {
         body.append("--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"\r\nContent-Type: audio/wav\r\n\r\n".data(using: .utf8)!)
         body.append(data)
         body.append("\r\n".data(using: .utf8)!)
-        field("response_format", "json")
+        field("response_format", "verbose_json")
         field("temperature", "0.0")
         field("language", language)
         field("no_timestamps", "true")
@@ -168,11 +173,12 @@ final class WhisperServer {
                 return
             }
             if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let text = obj["text"] as? String {
-                Log.w("whisper ok in \(String(format: "%.1f", Date().timeIntervalSince(t0)))s, \(text.count) chars")
-                completion(.success(text))
+                let lang = (obj["language"] as? String)?.lowercased()
+                Log.w("whisper ok in \(String(format: "%.1f", Date().timeIntervalSince(t0)))s, \(text.count) chars, lang=\(lang ?? "?")")
+                completion(.success(Transcript(text: text, language: lang)))
             } else {
                 let s = String(data: data, encoding: .utf8) ?? ""
-                completion(.success(s))
+                completion(.success(Transcript(text: s, language: nil)))
             }
         }.resume()
     }

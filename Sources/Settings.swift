@@ -149,6 +149,19 @@ final class Settings {
         get { bool("keepModelLoaded", default: true) }
         set { d.set(newValue, forKey: "keepModelLoaded") }
     }
+    /// 自動偵測時允許的語言（Whisper 回傳的英文名稱）；偵測到名單外的語言就用主要語言重辨一次
+    var allowedLanguages: [String] {
+        get { d.stringArray(forKey: "allowedLanguages") ?? ["chinese", "english"] }
+        set { d.set(newValue, forKey: "allowedLanguages") }
+    }
+    static let languageChoices: [(name: String, code: String, title: String)] = [
+        ("chinese", "zh", "中文"), ("cantonese", "yue", "粵語"), ("english", "en", "英文"),
+        ("malay", "ms", "馬來語"), ("japanese", "ja", "日文"), ("korean", "ko", "韓文"),
+    ]
+    var primaryLanguageCode: String {
+        if allowedLanguages.contains("chinese") { return "zh" }
+        return Settings.languageChoices.first { allowedLanguages.contains($0.name) }?.code ?? "zh"
+    }
     /// 快速辨識：依句子長度縮小 Whisper 的運算視窗（最小 512，約 10 秒），短句快一倍
     var fastWhisper: Bool {
         get { bool("fastWhisper", default: false) }
