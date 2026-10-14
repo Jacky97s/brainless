@@ -58,7 +58,10 @@ final class AppController: NSObject, NSApplicationDelegate {
             if case .failed(let msg) = s { self?.overlay.show(.error(msg)) }
         }
         mountAndStartEngines()
-        Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in self?.refreshOllama() }
+        Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
+            self?.refreshOllama()
+            if self?.state == .idle { self?.whisper.checkHealth() }
+        }
         Timer.scheduledTimer(withTimeInterval: 1200, repeats: true) { [weak self] _ in
             guard let self = self, self.settings.keepModelLoaded, self.settings.refine, self.ollamaStatus == .ready else { return }
             self.ollama.warmUp()

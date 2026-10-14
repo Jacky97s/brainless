@@ -50,7 +50,6 @@ final class WhisperServer {
             "--host", "127.0.0.1",
             "--port", "\(settings.whisperPort)",
             "-t", "6",
-            "-bs", "5",
             "-nt",
             "--public", publicDir.path,
         ]
@@ -101,6 +100,21 @@ final class WhisperServer {
         URLSession.shared.dataTask(with: req) { _, resp, _ in
             cb(resp != nil)
         }.resume()
+    }
+
+    /// 定期健檢：顯示就緒但埠沒回應（引擎死了）就重新拉起
+    func checkHealth() {
+        guard state == .ready else { return }
+        checkReady { [weak self] ok in
+            guard let self = self, !ok else { return }
+            Log.w("WhisperServer: health check failed, restarting")
+            DispatchQueue.main.async {
+                self.process?.terminate()
+                self.process = nil
+                self.state = .stopped
+                self.start()
+            }
+        }
     }
 
     func stop() {
