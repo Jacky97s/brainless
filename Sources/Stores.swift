@@ -108,7 +108,7 @@ final class DictionaryStore: ObservableObject {
     var whisperHint: String {
         guard !words.isEmpty else { return "" }
         var s = ""
-        for w in words { if s.count + w.count > 150 { break }; s += (s.isEmpty ? "" : "、") + w }
+        for w in words { if s.count + w.count > 200 { break }; s += (s.isEmpty ? "" : "、") + w }
         return s.isEmpty ? "" : " 專有名詞：\(s)。"
     }
     /// 給 Qwen 的補充規則
