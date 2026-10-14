@@ -124,7 +124,12 @@ final class WhisperServer {
         process = nil
     }
 
-    func transcribe(wav: URL, language: String, prompt: String?, completion: @escaping (Swift.Result<String, Error>) -> Void) {
+    /// 依音檔長度算運算視窗：每秒 50、加 5 秒餘裕，最小 512、最大 1500（整段 30 秒）
+    static func audioContext(forSeconds s: Double) -> Int {
+        min(1500, max(512, Int(s * 50) + 256))
+    }
+
+    func transcribe(wav: URL, language: String, prompt: String?, audioContext: Int? = nil, completion: @escaping (Swift.Result<String, Error>) -> Void) {
         guard let data = try? Data(contentsOf: wav) else {
             completion(.failure(NSError(domain: "Whispry", code: 2, userInfo: [NSLocalizedDescriptionKey: "讀不到錄音檔"])))
             return
@@ -141,6 +146,7 @@ final class WhisperServer {
         field("temperature", "0.0")
         field("language", language)
         field("no_timestamps", "true")
+        if let ctx = audioContext, ctx < 1500 { field("audio_ctx", "\(ctx)") }
         if let p = prompt, !p.isEmpty { field("prompt", p) }
         body.append("--\(boundary)--\r\n".data(using: .utf8)!)
 

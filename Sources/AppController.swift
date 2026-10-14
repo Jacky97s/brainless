@@ -128,6 +128,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         hub.onSetSounds = { [weak self] v in self?.settings.sounds = v; self?.afterSettingsChange() }
         hub.onSetMicKeepAlive = { [weak self] k in self?.setMicKeepAlive(k) }
         hub.onSetKeepModelLoaded = { [weak self] v in self?.setKeepModelLoaded(v) }
+        hub.onSetFastWhisper = { [weak self] v in self?.settings.fastWhisper = v; self?.afterSettingsChange() }
         hub.onToggleLogin = { [weak self] in self?.toggleLogin() }
         hub.onRestartEngines = { [weak self] in self?.restartEngines() }
         hub.onOpenLogs = { [weak self] in self?.openLogs() }
@@ -178,6 +179,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         hub.usesImage = VolumeManager.usesImage
         hub.micKeepAlive = settings.micKeepAlive
         hub.keepModelLoaded = settings.keepModelLoaded
+        hub.fastWhisper = settings.fastWhisper
         hub.micStandby = recorder.isCapturing
         hub.micName = AudioRecorder.defaultInputName()
     }
@@ -353,7 +355,8 @@ final class AppController: NSObject, NSApplicationDelegate {
 
         let run: (String?) -> Void = { [weak self] selection in
             guard let self = self else { return }
-            self.whisper.transcribe(wav: rec.url, language: lang.whisperCode, prompt: prompt.isEmpty ? nil : prompt) { result in
+            let ctx = self.settings.fastWhisper ? WhisperServer.audioContext(forSeconds: seconds) : nil
+            self.whisper.transcribe(wav: rec.url, language: lang.whisperCode, prompt: prompt.isEmpty ? nil : prompt, audioContext: ctx) { result in
                 DispatchQueue.main.async {
                     try? FileManager.default.removeItem(at: rec.url)
                     switch result {

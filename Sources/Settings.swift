@@ -148,6 +148,11 @@ final class Settings {
         get { bool("keepModelLoaded", default: true) }
         set { d.set(newValue, forKey: "keepModelLoaded") }
     }
+    /// 快速辨識：依句子長度縮小 Whisper 的運算視窗（最小 512，約 10 秒），短句快一倍
+    var fastWhisper: Bool {
+        get { bool("fastWhisper", default: true) }
+        set { d.set(newValue, forKey: "fastWhisper") }
+    }
     var micKeepAlive: MicKeepAlive {
         get { MicKeepAlive(rawValue: d.string(forKey: "micKeepAlive") ?? "") ?? .always }
         set { d.set(newValue.rawValue, forKey: "micKeepAlive") }
