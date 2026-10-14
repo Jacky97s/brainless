@@ -44,7 +44,7 @@ final class OllamaClient {
         var req = URLRequest(url: base.appendingPathComponent("api/generate"))
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let payload: [String: Any] = ["model": settings.ollamaModel, "keep_alive": keepAlive]
+        let payload: [String: Any] = ["model": settings.ollamaModel, "keep_alive": keepAlive, "options": ["num_ctx": 4096]]
         req.httpBody = try? JSONSerialization.data(withJSONObject: payload)
         req.timeoutInterval = 300
         URLSession.shared.dataTask(with: req) { _, _, err in
@@ -65,7 +65,8 @@ final class OllamaClient {
                 ["role": "system", "content": system],
                 ["role": "user", "content": user],
             ],
-            "options": ["temperature": 0.2, "num_predict": 2048],
+            // 聽寫用不到長上下文；num_ctx 壓在 4096 讓 KV 快取只佔幾百 MB，不然 Ollama 會用 32k 吃掉十幾 GB
+            "options": ["temperature": 0.2, "num_predict": 2048, "num_ctx": 4096],
         ]
         req.httpBody = try? JSONSerialization.data(withJSONObject: payload)
         req.timeoutInterval = 90

@@ -13,8 +13,11 @@ enum TextCleaner {
         t = t.replacingOccurrences(of: #"(?<=[\p{Han}，。！？、：；「」（）])\s+(?=[\p{Han}，。！？、：；「」（）])"#, with: "", options: .regularExpression)
         // 同一句連續重複好幾次（Whisper 幻覺）只留一次
         t = t.replacingOccurrences(of: #"(.{4,60}?)(?:[\s，,。！？?!]*\1){1,}"#, with: "$1", options: .regularExpression)
-        let hallucinations = ["謝謝觀看", "謝謝收看", "請不吝點讚", "請不吝點贊", "點讚訂閱", "字幕由", "字幕提供", "Amara.org", "明鏡", "訂閱我的頻道"]
-        if t.count <= 16, hallucinations.contains(where: { t.contains($0) }) { return "" }
+        let hallucinations = ["謝謝觀看", "謝謝收看", "請不吝點讚", "請不吝點贊", "點讚訂閱", "字幕由", "字幕提供", "中文字幕", "CaptionCube", "Amara.org", "明鏡", "訂閱我的頻道", "感謝收看", "下期再見"]
+        if t.count <= 24, hallucinations.contains(where: { t.contains($0) }) { return "" }
+        for h in ["中文字幕:", "中文字幕：", "字幕:", "字幕："] {
+            if t.hasPrefix(h) { t = String(t.dropFirst(h.count)).trimmingCharacters(in: .whitespacesAndNewlines) }
+        }
         t = t.replacingOccurrences(of: #"[ \t]+"#, with: " ", options: .regularExpression)
         t = t.replacingOccurrences(of: #"\n{3,}"#, with: "\n\n", options: .regularExpression)
         return t.trimmingCharacters(in: .whitespacesAndNewlines)
