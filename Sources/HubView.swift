@@ -508,6 +508,7 @@ struct SettingsPage: View {
                 }
                 section("行為") {
                     Toggle("AI 潤稿（\(model.ollamaModel) 去贅字、補標點、轉繁體）", isOn: Binding(get: { model.refine }, set: { model.onSetRefine?($0) }))
+                    Toggle("潤稿模型常駐記憶體（關掉的話閒置 30 分鐘會卸載，下次要多等十幾秒）", isOn: Binding(get: { model.keepModelLoaded }, set: { model.onSetKeepModelLoaded?($0) }))
                     Toggle("提示音", isOn: Binding(get: { model.sounds }, set: { model.onSetSounds?($0) }))
                     Toggle("登入時自動啟動", isOn: Binding(get: { model.loginEnabled }, set: { _ in model.onToggleLogin?() }))
                 }

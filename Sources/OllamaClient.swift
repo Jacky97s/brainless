@@ -10,6 +10,17 @@ final class OllamaClient {
     private let settings = Settings.shared
 
     private var base: URL { URL(string: settings.ollamaURL)! }
+    /// 數字 -1 代表永遠不卸載（要送數字，送字串會被 Ollama 退回 400）
+    private var keepAlive: Any { settings.keepModelLoaded ? -1 : "30m" }
+
+    /// 關掉常駐時把模型卸載
+    func unload() {
+        var req = URLRequest(url: base.appendingPathComponent("api/generate"))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["model": settings.ollamaModel, "keep_alive": 0])
+        URLSession.shared.dataTask(with: req).resume()
+    }
 
     func checkStatus(_ cb: @escaping (Status) -> Void) {
         var req = URLRequest(url: base.appendingPathComponent("api/tags"))
@@ -33,7 +44,7 @@ final class OllamaClient {
         var req = URLRequest(url: base.appendingPathComponent("api/generate"))
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let payload: [String: Any] = ["model": settings.ollamaModel, "keep_alive": "30m"]
+        let payload: [String: Any] = ["model": settings.ollamaModel, "keep_alive": keepAlive]
         req.httpBody = try? JSONSerialization.data(withJSONObject: payload)
         req.timeoutInterval = 300
         URLSession.shared.dataTask(with: req) { _, _, err in
@@ -49,7 +60,7 @@ final class OllamaClient {
             "model": settings.ollamaModel,
             "stream": false,
             "think": false,
-            "keep_alive": "30m",
+            "keep_alive": keepAlive,
             "messages": [
                 ["role": "system", "content": system],
                 ["role": "user", "content": user],

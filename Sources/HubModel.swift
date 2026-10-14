@@ -25,6 +25,7 @@ final class HubModel: ObservableObject {
     @Published var appState = "待命中"
     @Published var learningHotkey = false
     @Published var micKeepAlive: MicKeepAlive = .always
+    @Published var keepModelLoaded = true
     @Published var micStandby = false
     @Published var micName = ""
     @Published var whisperModelPresent = true
@@ -44,6 +45,7 @@ final class HubModel: ObservableObject {
     var onSetRefine: ((Bool) -> Void)?
     var onSetSounds: ((Bool) -> Void)?
     var onSetMicKeepAlive: ((MicKeepAlive) -> Void)?
+    var onSetKeepModelLoaded: ((Bool) -> Void)?
     var onToggleLogin: (() -> Void)?
     var onRestartEngines: (() -> Void)?
     var onOpenLogs: (() -> Void)?

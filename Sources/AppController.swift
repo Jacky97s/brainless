@@ -59,6 +59,10 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
         mountAndStartEngines()
         Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in self?.refreshOllama() }
+        Timer.scheduledTimer(withTimeInterval: 1200, repeats: true) { [weak self] _ in
+            guard let self = self, self.settings.keepModelLoaded, self.settings.refine, self.ollamaStatus == .ready else { return }
+            self.ollama.warmUp()
+        }
 
         recorder.onLevel = { [weak self] l in self?.overlay.level(l) }
         recorder.onCaptureStateChange = { [weak self] in self?.rebuildMenu(); self?.syncHub() }
@@ -119,6 +123,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
         hub.onSetSounds = { [weak self] v in self?.settings.sounds = v; self?.afterSettingsChange() }
         hub.onSetMicKeepAlive = { [weak self] k in self?.setMicKeepAlive(k) }
+        hub.onSetKeepModelLoaded = { [weak self] v in self?.setKeepModelLoaded(v) }
         hub.onToggleLogin = { [weak self] in self?.toggleLogin() }
         hub.onRestartEngines = { [weak self] in self?.restartEngines() }
         hub.onOpenLogs = { [weak self] in self?.openLogs() }
@@ -168,6 +173,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         hub.ollamaInstalled = ModelSetup.ollamaInstalled
         hub.usesImage = VolumeManager.usesImage
         hub.micKeepAlive = settings.micKeepAlive
+        hub.keepModelLoaded = settings.keepModelLoaded
         hub.micStandby = recorder.isCapturing
         hub.micName = AudioRecorder.defaultInputName()
     }
@@ -472,6 +478,14 @@ final class AppController: NSObject, NSApplicationDelegate {
         syncHub()
     }
 
+    private func setKeepModelLoaded(_ v: Bool) {
+        settings.keepModelLoaded = v
+        if v { if ollamaStatus == .ready { ollama.warmUp() } } else { ollama.unload() }
+        overlay.show(.info(v ? "潤稿模型會常駐記憶體" : "潤稿模型閒置 30 分鐘後會卸載"))
+        afterSettingsChange()
+    }
+    @objc private func toggleKeepModelLoaded() { setKeepModelLoaded(!settings.keepModelLoaded) }
+
     private func setMicKeepAlive(_ k: MicKeepAlive) {
         settings.micKeepAlive = k
         applyMicKeepAlive()
@@ -589,6 +603,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             item($0.title, #selector(pickLanguage(_:)), rep: $0.rawValue, checked: $0 == settings.language)
         }))
         m.addItem(item("AI 潤稿（\(settings.ollamaModel)）", #selector(toggleRefine), checked: settings.refine))
+        m.addItem(item("潤稿模型常駐記憶體", #selector(toggleKeepModelLoaded), checked: settings.keepModelLoaded))
         m.addItem(item("提示音", #selector(toggleSounds), checked: settings.sounds))
         m.addItem(submenu("麥克風保持喚醒：\(settings.micKeepAlive.shortTitle)（\(recorder.isCapturing ? "常駐中" : "休眠中")）", MicKeepAlive.allCases.map {
             item($0.title, #selector(pickMicKeepAlive(_:)), rep: $0.rawValue, checked: $0 == settings.micKeepAlive)

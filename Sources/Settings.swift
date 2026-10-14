@@ -143,6 +143,11 @@ final class Settings {
         get { d.string(forKey: "customLabel") ?? "尚未設定" }
         set { d.set(newValue, forKey: "customLabel") }
     }
+    /// 潤稿模型常駐記憶體（不常駐的話閒置 30 分鐘會被卸載，下次要等十幾秒重新載入）
+    var keepModelLoaded: Bool {
+        get { bool("keepModelLoaded", default: true) }
+        set { d.set(newValue, forKey: "keepModelLoaded") }
+    }
     var micKeepAlive: MicKeepAlive {
         get { MicKeepAlive(rawValue: d.string(forKey: "micKeepAlive") ?? "") ?? .always }
         set { d.set(newValue.rawValue, forKey: "micKeepAlive") }
