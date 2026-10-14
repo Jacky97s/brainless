@@ -9,6 +9,8 @@ enum TextCleaner {
         t = t.replacingOccurrences(of: #"\[[^\]]*\]|\([^)]*\)|（[^）]*）"#, with: "", options: .regularExpression)
         t = t.trimmingCharacters(in: .whitespacesAndNewlines)
         if let h = t.applyingTransform(StringTransform(rawValue: "Hans-Hant"), reverse: false) { t = h }
+        // 粵語輸出常在字與字之間夾空格，收掉中文字之間的空格
+        t = t.replacingOccurrences(of: #"(?<=[\p{Han}，。！？、：；「」（）])\s+(?=[\p{Han}，。！？、：；「」（）])"#, with: "", options: .regularExpression)
         let hallucinations = ["謝謝觀看", "謝謝收看", "請不吝點讚", "請不吝點贊", "點讚訂閱", "字幕由", "字幕提供", "Amara.org", "明鏡", "訂閱我的頻道"]
         if t.count <= 16, hallucinations.contains(where: { t.contains($0) }) { return "" }
         t = t.replacingOccurrences(of: #"[ \t]+"#, with: " ", options: .regularExpression)
@@ -348,7 +350,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             return
         }
         let lang = settings.language
-        var prompt = (lang == .zh || lang == .auto) ? Prompts.whisperZhPrompt : ""
+        var prompt = (lang == .zh || lang == .auto) ? Prompts.whisperZhPrompt : (lang == .yue ? Prompts.whisperYuePrompt : "")
         prompt += dict.whisperHint
         let mode = settings.mode
         let seconds = rec.seconds
@@ -386,7 +388,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         case .translate: base = Prompts.translateSystem(target: settings.translateTarget)
         case .ask: base = Prompts.askSystem
         }
-        return base + dict.llmHint
+        return base + dict.llmHint + (settings.language == .yue ? Prompts.cantoneseHint : "")
     }
 
     private func afterTranscript(_ text: String, mode: Mode, selection: String?, seconds: Double) {

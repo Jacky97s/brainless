@@ -107,11 +107,12 @@ enum Mode: String, CaseIterable {
 }
 
 enum SpeechLanguage: String, CaseIterable {
-    case auto, zh, en, ja
+    case auto, zh, yue, en, ja
     var title: String {
         switch self {
         case .auto: return "自動偵測"
         case .zh: return "中文"
+        case .yue: return "粵語（口語字）"
         case .en: return "英文"
         case .ja: return "日文"
         }

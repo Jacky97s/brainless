@@ -58,4 +58,7 @@ enum Prompts {
 
     /// 給 Whisper 的提示，引導它輸出繁體中文與標點
     static let whisperZhPrompt = "以下是繁體中文的語音內容，有標點符號。"
+    static let whisperYuePrompt = "以下係廣東話嘅內容，有標點符號。"
+    /// 粵語模式給潤稿模型的補充
+    static let cantoneseHint = "\n\n逐字稿是廣東話口語，請保留口語字（嘅、咗、唔、喺、哋、嘢），不要改成普通話或書面語；中文仍用繁體。"
 }
