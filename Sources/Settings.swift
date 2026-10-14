@@ -150,7 +150,7 @@ final class Settings {
     }
     /// 快速辨識：依句子長度縮小 Whisper 的運算視窗（最小 512，約 10 秒），短句快一倍
     var fastWhisper: Bool {
-        get { bool("fastWhisper", default: true) }
+        get { bool("fastWhisper", default: false) }
         set { d.set(newValue, forKey: "fastWhisper") }
     }
     var micKeepAlive: MicKeepAlive {

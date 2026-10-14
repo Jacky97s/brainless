@@ -26,7 +26,7 @@ final class HubModel: ObservableObject {
     @Published var learningHotkey = false
     @Published var micKeepAlive: MicKeepAlive = .always
     @Published var keepModelLoaded = true
-    @Published var fastWhisper = true
+    @Published var fastWhisper = false
     @Published var micStandby = false
     @Published var micName = ""
     @Published var whisperModelPresent = true
