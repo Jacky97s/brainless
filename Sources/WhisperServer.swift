@@ -149,6 +149,8 @@ final class WhisperServer {
         body.append("\r\n".data(using: .utf8)!)
         field("response_format", "verbose_json")
         field("temperature", "0.0")
+        field("temperature_inc", "0.0")   // 關掉溫度回退：失敗時不要一再重解碼，極短或模糊的音檔曾因此跑 30 秒
+        field("no_speech_thold", "0.6")
         field("language", language)
         field("no_timestamps", "true")
         if let ctx = audioContext, ctx < 1500 { field("audio_ctx", "\(ctx)") }
