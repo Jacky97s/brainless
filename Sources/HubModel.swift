@@ -28,6 +28,8 @@ final class HubModel: ObservableObject {
     @Published var whisperModelName = "large-v3"
     @Published var volumeMounted = false
     @Published var appState = "待命中"
+    /// AppController.State 的 rawValue，或 "noPermission"
+    @Published var phase = "idle"
     /// 正在幫哪個模式學新的快捷鍵
     @Published var learningMode: Mode?
     @Published var micKeepAlive: MicKeepAlive = .always

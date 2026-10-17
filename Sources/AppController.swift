@@ -25,7 +25,7 @@ enum TextCleaner {
 }
 
 final class AppController: NSObject, NSApplicationDelegate {
-    enum State { case idle, recording, transcribing, refining, inserting }
+    enum State: String { case idle, recording, transcribing, refining, inserting }
     private var state: State = .idle {
         didSet { updateStatusIcon(); rebuildMenu(); syncHub() }
     }
@@ -205,6 +205,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         hub.whisperModelName = URL(fileURLWithPath: settings.whisperModelPath).deletingPathExtension().lastPathComponent.replacingOccurrences(of: "ggml-", with: "")
         hub.volumeMounted = VolumeManager.isMounted
         hub.appState = statusLine()
+        hub.phase = hotkeyRunning ? state.rawValue : "noPermission"
         hub.whisperModelPresent = ModelSetup.whisperModelPresent
         hub.whisperServerPresent = ModelSetup.findWhisperServer() != nil
         hub.ollamaInstalled = ModelSetup.ollamaInstalled
@@ -240,6 +241,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         if AXIsProcessTrustedWithOptions(opts) && hotkey.start() {
             hotkeyRunning = true
             rebuildMenu()
+            syncHub()
             overlay.show(.info("\(AppInfo.name) 準備好了，按 \(settings.primaryShortcutLabel) 開始說話"))
             return
         }
@@ -252,6 +254,7 @@ final class AppController: NSObject, NSApplicationDelegate {
                 self.hotkeyRunning = true
                 t.invalidate()
                 self.rebuildMenu()
+                self.syncHub()
                 self.overlay.show(.info("\(AppInfo.name) 準備好了，按 \(self.settings.primaryShortcutLabel) 開始說話"))
             }
         }

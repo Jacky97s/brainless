@@ -19,11 +19,18 @@ enum Theme {
     static let muted = dyn(hex(0x6b6b6b), hex(0x9b9b9b))
     static let accent = dyn(hex(0x1a4be0), hex(0x6b8dff))
     static let onInk = dyn(hex(0xffffff), hex(0x111111))
+    /// 側邊欄固定是一塊墨色，兩種外觀都一樣
+    static let sidebar = dyn(hex(0x111111), hex(0x0a0a0a))
+    static let sidebarSel = dyn(hex(0x2a2a2a), hex(0x1f1f1f))
+    static let sidebarMuted = Color(nsColor: hex(0x8c8c8c))
+    /// 首頁舞台的色面：待命是藍，錄音中是紅
+    static let stage = dyn(hex(0x1a4be0), hex(0x2a56e8))
+    static let stageLive = dyn(hex(0xd8342c), hex(0xc62f28))
     static let green = Color(red: 0.16, green: 0.62, blue: 0.33)
     static let orange = Color(red: 0.90, green: 0.50, blue: 0.10)
 
-    static let title = Font.system(size: 26, weight: .semibold)
-    static let heading = Font.system(size: 15, weight: .semibold)
+    static let title = Font.system(size: 34, weight: .bold)
+    static let heading = Font.system(size: 19, weight: .semibold)
     static let body = Font.system(size: 14)
     static let small = Font.system(size: 12)
 }
@@ -206,29 +213,34 @@ struct Sidebar: View {
     @ObservedObject var model: HubModel
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(AppInfo.name).font(.system(size: 17, weight: .semibold))
-                .padding(.leading, 10).padding(.top, 48).padding(.bottom, 20)
+            HStack(spacing: 8) {
+                Image(systemName: "waveform").font(.system(size: 17, weight: .bold)).foregroundColor(Theme.stage)
+                Text(AppInfo.name).font(.system(size: 20, weight: .bold))
+            }
+            .padding(.leading, 10).padding(.top, 48).padding(.bottom, 24)
             ForEach(HubModel.Page.allCases, id: \.self) { p in
                 HStack(spacing: 10) {
                     Image(systemName: p.icon).frame(width: 18)
-                    Text(p.title).font(Theme.body)
+                    Text(p.title).font(.system(size: 14, weight: model.page == p ? .semibold : .regular))
                     Spacer()
                 }
-                .padding(.horizontal, 10).padding(.vertical, 8)
-                .background(model.page == p ? Theme.surfaceHi : Color.clear)
+                .foregroundColor(model.page == p ? .white : Theme.sidebarMuted)
+                .padding(.horizontal, 10).padding(.vertical, 9)
+                .background(model.page == p ? Theme.sidebarSel : Color.clear)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
                 .contentShape(Rectangle())
                 .onTapGesture { model.page = p }
                 .accessibilityAddTraits(model.page == p ? [.isButton, .isSelected] : .isButton)
             }
             Spacer()
-            Text(model.privacyLine).font(Theme.small).foregroundColor(Theme.muted)
+            Text(model.privacyLine).font(Theme.small).foregroundColor(Theme.sidebarMuted)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 10).padding(.bottom, 16)
         }
+        .foregroundColor(.white)
         .padding(10)
         .frame(width: 210)
-        .background(Theme.surface)
+        .background(Theme.sidebar)
     }
 }
 
@@ -259,20 +271,20 @@ struct Heatmap: View {
             return m != pm ? Self.monthFmt.string(from: days[c][0].date) : ""
         }
         VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .top, spacing: 3) {
+            HStack(alignment: .top, spacing: 4) {
                 ForEach(0..<weeks, id: \.self) { c in
-                    VStack(spacing: 3) {
+                    VStack(spacing: 4) {
                         ForEach(0..<7, id: \.self) { r in
                             let day = days[c][r]
-                            Rectangle().fill(color(day.n, future: day.date > today)).frame(width: 14, height: 14)
+                            RoundedRectangle(cornerRadius: 3).fill(color(day.n, future: day.date > today)).frame(width: 16, height: 16)
                         }
                     }
                 }
             }
-            HStack(spacing: 3) {
+            HStack(spacing: 4) {
                 ForEach(0..<weeks, id: \.self) { c in
                     Text(months[c]).font(.system(size: 10)).foregroundColor(Theme.muted)
-                        .lineLimit(1).fixedSize().frame(width: 14, alignment: .leading)
+                        .lineLimit(1).fixedSize().frame(width: 16, alignment: .leading)
                 }
             }
         }
@@ -282,9 +294,9 @@ struct Heatmap: View {
         if future { return .clear }
         switch n {
         case 0: return Theme.surfaceHi
-        case 1...2: return Theme.ink.opacity(0.3)
-        case 3...5: return Theme.ink.opacity(0.6)
-        default: return Theme.ink
+        case 1...2: return Theme.stage.opacity(0.35)
+        case 3...5: return Theme.stage.opacity(0.65)
+        default: return Theme.stage
         }
     }
 }
@@ -297,23 +309,24 @@ struct HomePage: View {
             if model.setupNeeded {
                 SetupCard(model: model, downloader: model.downloader, puller: model.puller)
             }
-            Block("快捷鍵", note: "按一下開始、再按一下結束；按住說完放開也可以。說話時按 Esc 取消。") {
+            Stage(model: model)
+            let days = history.countsByDay
+            Block("你的數字") {
+                HStack(alignment: .top, spacing: 40) {
+                    figure("\(history.totalChars)", "字", "口述字數")
+                    figure("\(history.savedMinutes)", "分鐘", "省下的時間")
+                    figure("\(history.currentStreak)", "天", "連續天數・最長 \(history.longestStreak)")
+                }
+                Heatmap(counts: days).padding(.top, 12)
+                Text("過去 24 週，共 \(days.count) 天有口述。平均每分鐘 \(history.charsPerMinute) 字；省下的時間以每分鐘打 60 字估算。")
+                    .font(Theme.small).foregroundColor(Theme.muted)
+            }
+            Block("所有快捷鍵") {
                 RowGroup {
                     ForEach(Mode.allCases, id: \.self) { m in
                         Row(m.shortTitle, detail: note(for: m)) { ShortcutKeys(shortcuts: model.shortcuts[m] ?? []) }
                     }
                 }
-            }
-            Block("你的數字") {
-                let days = history.countsByDay
-                RowGroup {
-                    Row("口述字數") { figure("\(history.totalChars)", "字") }
-                    Row("省下的時間", detail: "以每分鐘打 60 字估算") { figure("\(history.savedMinutes)", "分鐘") }
-                    Row("平均口述速度") { figure("\(history.charsPerMinute)", "字／分鐘") }
-                    Row("活躍天數") { figure("\(days.count)", "天") }
-                    Row("連續天數", detail: "最長 \(history.longestStreak) 天") { figure("\(history.currentStreak)", "天") }
-                }
-                Heatmap(counts: days).padding(.top, 8)
             }
             Block("引擎") {
                 RowGroup {
@@ -337,10 +350,13 @@ struct HomePage: View {
         }
     }
 
-    private func figure(_ v: String, _ unit: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 4) {
-            Text(v).font(.system(size: 20, weight: .semibold)).monospacedDigit()
-            Text(unit).font(Theme.small).foregroundColor(Theme.muted)
+    private func figure(_ v: String, _ unit: String, _ label: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(v).font(.system(size: 44, weight: .bold)).monospacedDigit()
+                Text(unit).font(.system(size: 14, weight: .medium)).foregroundColor(Theme.muted)
+            }
+            Text(label).font(Theme.small).foregroundColor(Theme.muted)
         }
     }
 
@@ -348,6 +364,72 @@ struct HomePage: View {
         HStack(spacing: 6) {
             StatusDot(ok: ok)
             Text(text).font(Theme.small).foregroundColor(Theme.muted).lineLimit(1)
+        }
+    }
+}
+
+/// 首頁的舞台：一整塊色面，用大鍵帽寫出聽寫的快捷鍵，並即時反映現在在做什麼
+struct Stage: View {
+    @ObservedObject var model: HubModel
+    var body: some View {
+        let live = model.phase == "recording"
+        HStack(alignment: .top, spacing: 24) {
+            main(live: live)
+            Spacer(minLength: 0)
+            VStack(alignment: .trailing, spacing: 14) {
+                ForEach([Mode.translate, .ask], id: \.self) { m in
+                    VStack(alignment: .trailing, spacing: 4) {
+                        Text(m.shortTitle).font(Theme.small).foregroundColor(.white.opacity(0.7))
+                        Text(model.shortcuts[m]?.first?.label ?? "未設定").font(.system(size: 15, weight: .semibold))
+                    }
+                }
+            }
+        }
+        .foregroundColor(.white)
+        .padding(28)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(live ? Theme.stageLive : Theme.stage)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .animation(.easeOut(duration: 0.2), value: model.phase)
+    }
+
+    private func main(live: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text(headline).font(.system(size: 15, weight: .semibold)).foregroundColor(.white.opacity(0.85))
+            if let sc = model.shortcuts[.dictate]?.first {
+                HStack(spacing: 10) {
+                    ForEach(sc.parts, id: \.self) { p in
+                        Text(p).font(.system(size: 30, weight: .semibold))
+                            .padding(.horizontal, 18).padding(.vertical, 12)
+                            .foregroundColor(live ? Theme.stageLive : Theme.stage)
+                            .background(Color.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                    }
+                }
+            } else {
+                Text("先到設定加一組聽寫快捷鍵").font(.system(size: 30, weight: .semibold))
+            }
+            Text(detail).font(Theme.body).foregroundColor(.white.opacity(0.85)).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var headline: String {
+        switch model.phase {
+        case "recording": return "聆聽中"
+        case "transcribing": return "辨識中…"
+        case "refining": return "潤稿中…"
+        case "inserting": return "貼上中…"
+        case "noPermission": return "還沒有「輔助使用」權限"
+        default: return "待命中"
+        }
+    }
+
+    private var detail: String {
+        switch model.phase {
+        case "recording": return "說完再按一下結束，按 Esc 取消。"
+        case "noPermission": return "到 系統設定 › 隱私權與安全性 › 輔助使用 打開 Brainless，快捷鍵才會有反應。"
+        case "transcribing", "refining", "inserting": return "好了就會貼到游標所在的地方。"
+        default: return "游標點到任何能打字的地方，按一下開始說話，再按一下結束。"
         }
     }
 }
