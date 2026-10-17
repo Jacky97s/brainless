@@ -188,7 +188,8 @@ final class Transcriber {
                     guard let self = self, gen == self.probeGeneration else { return }
                     if let http = resp as? HTTPURLResponse {
                         if http.statusCode == 401 || http.statusCode == 403 {
-                            self.setRemote(.failed("API key 被拒絕（\(http.statusCode)）"))
+                            let noKey = (key.value ?? "").isEmpty
+                            self.setRemote(.failed(noKey ? "\(cfg.baseURL.host ?? "這個端點")需要 API key" : "API key 被拒絕（\(http.statusCode)）"))
                         } else if (300..<400).contains(http.statusCode) {
                             self.setRemote(.failed("端點要求轉址（\(http.statusCode)），為了不把 API key 帶到別處而不跟隨；請填最終的網址"))
                         } else {

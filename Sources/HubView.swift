@@ -696,7 +696,7 @@ struct SettingsPage: View {
                     }
                     if model.resolvedBackend == .openai {
                         EndpointRows(url: model.remoteChatURL, modelName: model.remoteChatModel, hasKey: model.hasChatKey,
-                                     urlPlaceholder: "https://api.groq.com/openai/v1", modelPlaceholder: "llama-3.3-70b-versatile", keyPlaceholder: "必填",
+                                     urlPlaceholder: "留空用 Groq", modelPlaceholder: "留空用 \(Settings.defaultChatModel)", keyPlaceholder: "必填",
                                      onSetConfig: { model.onSetRemoteChat?($0, $1) }, onSetKey: { model.onSetChatKey?($0) })
                     } else if model.resolvedBackend != .ollama {
                         Row("模型") {
@@ -774,7 +774,7 @@ struct SpeechEngineBlock: View {
             if model.speechEngine == .remote {
                 RowGroup {
                     EndpointRows(url: model.remoteWhisperURL, modelName: model.remoteWhisperModel, hasKey: model.hasRemoteKey,
-                                 urlPlaceholder: "https://api.groq.com/openai/v1", modelPlaceholder: "whisper-large-v3", keyPlaceholder: "選填",
+                                 urlPlaceholder: "留空用 Groq", modelPlaceholder: "留空用 \(Settings.defaultRemoteModel)", keyPlaceholder: "Groq 必填",
                                  onSetConfig: { model.onSetRemoteWhisper?($0, $1) }, onSetKey: { model.onSetRemoteKey?($0) })
                     Row("狀態") {
                         HStack(spacing: 6) {

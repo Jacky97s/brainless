@@ -177,13 +177,16 @@ final class Settings {
         set { d.set(newValue, forKey: "remoteWhisperURL") }
     }
     static let defaultRemoteModel = "whisper-large-v3"
+    /// 端點留空就用 Groq；填了但格式不對仍然算沒設定，不會偷偷換成 Groq
+    static let defaultEndpoint = "https://api.groq.com/openai/v1"
+    static let defaultChatModel = "llama-3.3-70b-versatile"
     var remoteWhisperModel: String {
         get { d.string(forKey: "remoteWhisperModel") ?? Settings.defaultRemoteModel }
         set { d.set(newValue, forKey: "remoteWhisperModel") }
     }
     /// 字串在這裡一次解析完；模型留白就用預設
     var remoteWhisper: RemoteWhisperConfig? {
-        guard let url = Settings.parseEndpoint(remoteWhisperURL) else { return nil }
+        guard let url = Settings.parseEndpoint(remoteWhisperURL, orDefault: Settings.defaultEndpoint) else { return nil }
         let model = remoteWhisperModel.trimmingCharacters(in: .whitespacesAndNewlines)
         return RemoteWhisperConfig(baseURL: url, model: model.isEmpty ? Settings.defaultRemoteModel : model)
     }
@@ -197,13 +200,15 @@ final class Settings {
     }
     /// 潤稿沒有安全的預設模型，留白就是還沒設定
     var remoteChat: RemoteChatConfig? {
-        let model = remoteChatModel.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !model.isEmpty, let url = Settings.parseEndpoint(remoteChatURL) else { return nil }
+        let typed = remoteChatModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        let model = typed.isEmpty ? Settings.defaultChatModel : typed
+        guard let url = Settings.parseEndpoint(remoteChatURL, orDefault: Settings.defaultEndpoint) else { return nil }
         return RemoteChatConfig(baseURL: url, model: model)
     }
     /// http／https、有主機、沒有帳密，結尾的斜線去掉
-    private static func parseEndpoint(_ raw: String) -> URL? {
+    private static func parseEndpoint(_ raw: String, orDefault fallback: String) -> URL? {
         var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.isEmpty { s = fallback }
         while s.hasSuffix("/") { s.removeLast() }
         guard let url = URL(string: s), let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
               let host = url.host, !host.isEmpty, url.user == nil, url.password == nil else { return nil }
