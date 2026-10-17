@@ -148,7 +148,16 @@ final class AppController: NSObject, NSApplicationDelegate {
             self?.settings.remoteWhisperModel = model
             self?.restartTranscriber()
         }
-        hub.onSetRemoteKey = { [weak self] key in self?.settings.setRemoteKey(key); self?.restartTranscriber() }
+        hub.onSetRemoteKey = { [weak self] key in
+            guard let self = self else { return }
+            let status = self.settings.setRemoteKey(key)
+            guard status == errSecSuccess else {
+                self.overlay.show(.error("API key 存不進鑰匙圈（\(status)）"))
+                self.syncHub()
+                return
+            }
+            self.restartTranscriber()
+        }
         hub.onToggleAllowedLanguage = { [weak self] name in
             guard let self = self else { return }
             var a = self.settings.allowedLanguages
@@ -212,7 +221,8 @@ final class AppController: NSObject, NSApplicationDelegate {
         hub.remoteWhisperURL = settings.remoteWhisperURL
         hub.remoteWhisperModel = settings.remoteWhisperModel
         hub.remoteHost = settings.remoteWhisper?.baseURL.host ?? ""
-        hub.hasRemoteKey = !(settings.remoteKey ?? "").isEmpty
+        hub.remoteSendsKeyInClear = settings.remoteWhisper?.sendsKeyInClear ?? false
+        hub.hasRemoteKey = settings.cachedRemoteKey?.value != nil
         hub.transcriberLabel = transcriber.label
         hub.whisperOK = transcriber.isReady
         hub.whisperStatus = transcriberStatusText()
@@ -457,7 +467,7 @@ final class AppController: NSObject, NSApplicationDelegate {
                     switch result {
                     case .failure(let e):
                         try? FileManager.default.removeItem(at: rec.url)
-                        self.fail("辨識失敗：\(e.localizedDescription)")
+                        self.fail("辨識失敗：\(e.localizedDescription)", detail: (e as? RemoteFailure)?.detail)
                     case .success(let r):
                         let allowed = self.settings.allowedLanguages
                         if lang == .auto, let det = r.language, !allowed.isEmpty, !allowed.contains(det) {
@@ -472,7 +482,7 @@ final class AppController: NSObject, NSApplicationDelegate {
                                     switch r2 {
                                     case .failure(let e):
                                         try? FileManager.default.removeItem(at: rec.url)
-                                        self.fail("辨識失敗：\(e.localizedDescription)")
+                                        self.fail("辨識失敗：\(e.localizedDescription)", detail: (e as? RemoteFailure)?.detail)
                                     case .success(let rr):
                                         finish(rr.text)
                                     }
@@ -654,13 +664,14 @@ final class AppController: NSObject, NSApplicationDelegate {
         if let r = s.representedObject as? String, let k = MicKeepAlive(rawValue: r) { setMicKeepAlive(k) }
     }
 
-    private func fail(_ msg: String) {
+    /// detail 只顯示在畫面上，不進記錄檔（遠端端點回應的內容）
+    private func fail(_ msg: String, detail: String? = nil) {
         Log.w("fail: \(msg)")
         endJob()
         state = .idle
         applyMicKeepAlive()
         playSound("Basso")
-        overlay.show(.error(msg))
+        overlay.show(.error(detail.map { "\(msg)：\($0)" } ?? msg))
     }
 
     private func playSound(_ name: String) {

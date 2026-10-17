@@ -52,6 +52,8 @@ final class HubModel: ObservableObject {
     @Published var remoteHost = ""
     /// 金鑰本身不進 UI，只告訴畫面有沒有存
     @Published var hasRemoteKey = false
+    /// 端點是 http 且不是本機迴路
+    @Published var remoteSendsKeyInClear = false
     @Published var transcriberLabel = ""
     var privacyLine: String {
         let host = remoteHost.isEmpty ? "遠端端點" : remoteHost

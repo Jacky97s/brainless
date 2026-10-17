@@ -9,24 +9,29 @@ enum Keychain {
          kSecAttrAccount as String: account]
     }
 
-    static func get(service: String, account: String) -> String? {
+    /// 沒有這個項目時 value 是 nil、status 是 errSecItemNotFound；其他非 errSecSuccess 代表讀取失敗（例如使用者拒絕存取）
+    static func get(service: String, account: String) -> (value: String?, status: OSStatus) {
         var q = query(service: service, account: account)
         q[kSecReturnData as String] = true
         q[kSecMatchLimit as String] = kSecMatchLimitOne
         var out: CFTypeRef?
-        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let data = out as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+        let status = SecItemCopyMatching(q as CFDictionary, &out)
+        guard status == errSecSuccess, let data = out as? Data else { return (nil, status) }
+        return (String(data: data, encoding: .utf8), status)
     }
 
-    /// 空字串代表刪除
-    static func set(_ value: String, service: String, account: String) {
+    /// 空字串代表刪除；本來就沒有的項目刪除也算成功
+    static func set(_ value: String, service: String, account: String) -> OSStatus {
         let q = query(service: service, account: account)
-        guard !value.isEmpty else { SecItemDelete(q as CFDictionary); return }
-        let data = Data(value.utf8)
-        if SecItemUpdate(q as CFDictionary, [kSecValueData as String: data] as CFDictionary) == errSecItemNotFound {
-            var add = q
-            add[kSecValueData as String] = data
-            SecItemAdd(add as CFDictionary, nil)
+        guard !value.isEmpty else {
+            let status = SecItemDelete(q as CFDictionary)
+            return status == errSecItemNotFound ? errSecSuccess : status
         }
+        let data = Data(value.utf8)
+        let status = SecItemUpdate(q as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        guard status == errSecItemNotFound else { return status }
+        var add = q
+        add[kSecValueData as String] = data
+        return SecItemAdd(add as CFDictionary, nil)
     }
 }

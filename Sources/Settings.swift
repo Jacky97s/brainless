@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 /// 舊版的單一快捷鍵設定，只用來換算成 Settings.shortcuts
 enum HotkeyChoice: String {
@@ -74,6 +75,16 @@ enum SpeechLanguage: String, CaseIterable {
     var whisperCode: String { rawValue }
 }
 
+/// 鑰匙圈裡的遠端 API key
+enum RemoteKey: Equatable {
+    case none
+    case key(String)
+    /// 讀不到（例如使用者在存取提示按了拒絕），不是「沒有存」
+    case unreadable(OSStatus)
+
+    var value: String? { if case .key(let k) = self { return k } else { return nil } }
+}
+
 final class Settings {
     static let shared = Settings()
     private let d = UserDefaults.standard
@@ -129,13 +140,48 @@ final class Settings {
         var s = remoteWhisperURL.trimmingCharacters(in: .whitespacesAndNewlines)
         while s.hasSuffix("/") { s.removeLast() }
         guard let url = URL(string: s), let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
-              let host = url.host, !host.isEmpty else { return nil }
+              let host = url.host, !host.isEmpty, url.user == nil, url.password == nil else { return nil }
         let model = remoteWhisperModel.trimmingCharacters(in: .whitespacesAndNewlines)
         return RemoteWhisperConfig(baseURL: url, model: model.isEmpty ? Settings.defaultRemoteModel : model)
     }
     private static let keychainService = "app.whispry.mac.remote-whisper"
-    var remoteKey: String? { Keychain.get(service: Settings.keychainService, account: "api-key") }
-    func setRemoteKey(_ key: String) { Keychain.set(key, service: Settings.keychainService, account: "api-key") }
+    private let keyLock = NSLock()
+    private var keyCache: RemoteKey?
+    private var keyVersion = 0
+    /// 只看記憶體，不碰鑰匙圈；還沒讀過時是 nil
+    var cachedRemoteKey: RemoteKey? {
+        keyLock.lock(); defer { keyLock.unlock() }
+        return keyCache
+    }
+    /// 第一次（或上次讀失敗且 retryFailure）才讀鑰匙圈。讀取可能跳出存取提示而卡住，不要在主執行緒呼叫
+    func loadRemoteKey(retryFailure: Bool = false) -> RemoteKey {
+        keyLock.lock()
+        let version = keyVersion
+        if let c = keyCache {
+            if case .unreadable = c, retryFailure {} else { keyLock.unlock(); return c }
+        }
+        keyLock.unlock()
+        let r = Keychain.get(service: Settings.keychainService, account: "api-key")
+        let loaded: RemoteKey
+        switch r.status {
+        case errSecSuccess: loaded = r.value.map(RemoteKey.key) ?? .unreadable(errSecDecode)
+        case errSecItemNotFound: loaded = .none
+        default: loaded = .unreadable(r.status)
+        }
+        keyLock.lock(); defer { keyLock.unlock() }
+        // 讀的期間 setRemoteKey 已經寫過新值，以新值為準
+        if keyVersion == version { keyCache = loaded }
+        return keyCache ?? loaded
+    }
+    /// 空字串代表刪除。只有鑰匙圈寫入成功才更新記憶體裡的值
+    func setRemoteKey(_ key: String) -> OSStatus {
+        let status = Keychain.set(key, service: Settings.keychainService, account: "api-key")
+        guard status == errSecSuccess else { return status }
+        keyLock.lock(); defer { keyLock.unlock() }
+        keyCache = key.isEmpty ? RemoteKey.none : .key(key)
+        keyVersion += 1
+        return status
+    }
 
     var micKeepAlive: MicKeepAlive {
         get { MicKeepAlive(rawValue: d.string(forKey: "micKeepAlive") ?? "") ?? .always }

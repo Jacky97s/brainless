@@ -775,6 +775,9 @@ struct SpeechEngineBlock: View {
                         }
                     }
                 }
+                if model.remoteSendsKeyInClear && model.hasRemoteKey {
+                    Text("這個端點不是 https，API key 會以明文傳送。").font(Theme.small).foregroundColor(Theme.muted)
+                }
             }
         }
         .onAppear {

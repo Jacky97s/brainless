@@ -7,6 +7,19 @@ enum SpeechEngine: String, CaseIterable { case local, remote }
 struct RemoteWhisperConfig: Equatable {
     let baseURL: URL   // 例如 https://api.groq.com/openai/v1，結尾沒有斜線
     let model: String  // 例如 whisper-large-v3
+
+    /// http 且不是本機迴路：API key 會以明文經過網路
+    var sendsKeyInClear: Bool {
+        guard baseURL.scheme?.lowercased() == "http" else { return false }
+        return !["127.0.0.1", "::1", "localhost"].contains(baseURL.host?.lowercased() ?? "")
+    }
+}
+
+/// 遠端失敗。message 會經由錯誤訊息進記錄檔，所以不放上游回應；回應開頭（已遮掉 API key）放 detail，只給畫面顯示
+struct RemoteFailure: LocalizedError {
+    let message: String
+    var detail: String? = nil
+    var errorDescription: String? { message }
 }
 
 struct Transcript {
@@ -28,7 +41,12 @@ enum WhisperHTTP {
         return body
     }
 
-    /// source 是錯誤訊息裡的主詞（「whisper-server」「遠端辨識」）
+    private static func transcript(from data: Data) -> Transcript? {
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let text = obj["text"] as? String else { return nil }
+        return Transcript(text: text, language: (obj["language"] as? String)?.lowercased())
+    }
+
+    /// 本機 whisper-server；source 是錯誤訊息裡的主詞
     static func parse(data: Data?, response: URLResponse?, error: Error?, source: String) -> Swift.Result<Transcript, Error> {
         if let error = error { return .failure(error) }
         guard let data = data else {
@@ -38,10 +56,34 @@ enum WhisperHTTP {
             let msg = String(data: data, encoding: .utf8) ?? ""
             return .failure(NSError(domain: "Whispry", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: "\(source) 回傳 \(http.statusCode)：\(msg.prefix(200))"]))
         }
-        if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let text = obj["text"] as? String {
-            return .success(Transcript(text: text, language: (obj["language"] as? String)?.lowercased()))
-        }
+        if let t = transcript(from: data) { return .success(t) }
         return .success(Transcript(text: String(data: data, encoding: .utf8) ?? "", language: nil))
+    }
+
+    /// 遠端：200 但不是帶 text 的 JSON 也算失敗，不能把錯誤頁當成逐字稿貼出去
+    static func parseRemote(data: Data?, response: URLResponse?, error: Error?, key: String?) -> Swift.Result<Transcript, Error> {
+        if let error = error { return .failure(error) }
+        guard let data = data else { return .failure(RemoteFailure(message: "遠端辨識 沒有回應")) }
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            // 先遮再截，key 跨在截斷處也不會露出一段
+            let body = redact(String(data: data, encoding: .utf8) ?? "", key: key)
+            return .failure(RemoteFailure(message: "遠端辨識 回傳 \(http.statusCode)", detail: body.isEmpty ? nil : String(body.prefix(200))))
+        }
+        guard let t = transcript(from: data) else { return .failure(RemoteFailure(message: "遠端回應不是辨識結果")) }
+        return .success(t)
+    }
+
+    static func redact(_ s: String, key: String?) -> String {
+        guard let key = key, !key.isEmpty else { return s }
+        return s.replacingOccurrences(of: key, with: "***")
+    }
+}
+
+/// 遠端端點回重新導向時不跟過去，Authorization 才不會被帶到別的主機
+private final class RefuseRedirects: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
     }
 }
 
@@ -59,6 +101,8 @@ final class Transcriber {
     }
     private var probeGeneration = 0
     var onStateChange: ((State) -> Void)?
+    /// 遠端請求一律走這裡：ephemeral 不把帶 Authorization 的請求寫進磁碟快取，也不跟隨重新導向
+    private static let remoteSession = URLSession(configuration: .ephemeral, delegate: RefuseRedirects(), delegateQueue: nil)
 
     init() {
         local.onStateChange = { [weak self] s in
@@ -114,34 +158,50 @@ final class Transcriber {
 
     private func setRemote(_ s: State) { if remoteState != s { remoteState = s } }
 
-    /// 沒有 /models 的 whisper.cpp 也會回應（404），所以只要有 HTTP 回應、且不是 401／403 就算連得上
+    /// 沒有 /models 的 whisper.cpp 也會回應（404），所以只要有 HTTP 回應、且不是 401／403 或重新導向就算連得上。
+    /// 鑰匙圈在這裡第一次讀（背景執行緒，可能跳出存取提示）；明確重啟時，上次讀失敗的會再讀一次
     private func probe(silent: Bool) {
         guard let cfg = settings.remoteWhisper else { setRemote(.failed("還沒設定遠端端點")); return }
         if !silent { setRemote(.starting) }
         probeGeneration += 1
         let gen = probeGeneration
-        var req = URLRequest(url: cfg.baseURL.appendingPathComponent("models"))
-        req.timeoutInterval = 5
-        applyKey(&req)
         let host = cfg.baseURL.host ?? "?"
-        URLSession.shared.dataTask(with: req) { [weak self] _, resp, err in
-            DispatchQueue.main.async {
-                guard let self = self, gen == self.probeGeneration else { return }
-                if let http = resp as? HTTPURLResponse {
-                    if http.statusCode == 401 || http.statusCode == 403 {
-                        self.setRemote(.failed("API key 被拒絕（\(http.statusCode)）"))
-                    } else {
-                        self.setRemote(.ready)
-                    }
-                } else {
-                    self.setRemote(.failed("連不上 \(host)：\(err?.localizedDescription ?? "沒有回應")"))
+        let settings = self.settings
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let key = settings.loadRemoteKey(retryFailure: !silent)
+            if case .unreadable(let status) = key {
+                DispatchQueue.main.async {
+                    guard let self = self, gen == self.probeGeneration else { return }
+                    self.setRemote(.failed(Self.unreadableKeyMessage(status)))
                 }
+                return
             }
-        }.resume()
+            var req = URLRequest(url: cfg.baseURL.appendingPathComponent("models"))
+            req.timeoutInterval = 5
+            Self.authorize(&req, key: key.value)
+            Self.remoteSession.dataTask(with: req) { [weak self] _, resp, err in
+                DispatchQueue.main.async {
+                    guard let self = self, gen == self.probeGeneration else { return }
+                    if let http = resp as? HTTPURLResponse {
+                        if http.statusCode == 401 || http.statusCode == 403 {
+                            self.setRemote(.failed("API key 被拒絕（\(http.statusCode)）"))
+                        } else if (300..<400).contains(http.statusCode) {
+                            self.setRemote(.failed("端點要求轉址（\(http.statusCode)），為了不把 API key 帶到別處而不跟隨；請填最終的網址"))
+                        } else {
+                            self.setRemote(.ready)
+                        }
+                    } else {
+                        self.setRemote(.failed("連不上 \(host)：\(err?.localizedDescription ?? "沒有回應")"))
+                    }
+                }
+            }.resume()
+        }
     }
 
-    private func applyKey(_ req: inout URLRequest) {
-        if let key = settings.remoteKey, !key.isEmpty { req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
+    private static func unreadableKeyMessage(_ status: OSStatus) -> String { "讀不到鑰匙圈裡的 API key（\(status)）" }
+
+    private static func authorize(_ req: inout URLRequest, key: String?) {
+        if let key = key, !key.isEmpty { req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
     }
 
     /// 回傳的 closure 取消這次請求
@@ -154,8 +214,9 @@ final class Transcriber {
         let boundary = "----Whispry\(UUID().uuidString)"
         var fields: [(String, String)]
         var req: URLRequest
-        let source: String
         let tag: String
+        let session: URLSession
+        let parse: (Data?, URLResponse?, Error?) -> Swift.Result<Transcript, Error>
         switch engine {
         case .local:
             fields = [
@@ -169,28 +230,41 @@ final class Transcriber {
             if let ctx = audioContext, ctx < 1500 { fields.append(("audio_ctx", "\(ctx)")) }
             req = URLRequest(url: local.baseURL.appendingPathComponent("inference"))
             req.timeoutInterval = 180
-            source = "whisper-server"
             tag = "whisper"
+            session = URLSession.shared
+            parse = { WhisperHTTP.parse(data: $0, response: $1, error: $2, source: "whisper-server") }
         case .remote:
             guard let cfg = settings.remoteWhisper else {
                 completion(.failure(NSError(domain: "Whispry", code: 4, userInfo: [NSLocalizedDescriptionKey: "還沒設定遠端端點"])))
                 return {}
             }
+            let key: String?
+            switch settings.cachedRemoteKey {
+            case .unreadable(let status)?:
+                completion(.failure(RemoteFailure(message: Self.unreadableKeyMessage(status))))
+                return {}
+            case nil:
+                completion(.failure(RemoteFailure(message: "遠端辨識還沒準備好")))
+                return {}
+            case let k?:
+                key = k.value
+            }
             fields = [("model", cfg.model), ("response_format", "verbose_json"), ("temperature", "0")]
             if language != "auto" { fields.append(("language", language)) }
             req = URLRequest(url: cfg.baseURL.appendingPathComponent("audio/transcriptions"))
             req.timeoutInterval = 60
-            applyKey(&req)
-            source = "遠端辨識"
+            Self.authorize(&req, key: key)
             tag = "remote whisper"
+            session = Self.remoteSession
+            parse = { WhisperHTTP.parseRemote(data: $0, response: $1, error: $2, key: key) }
         }
         if let p = prompt, !p.isEmpty { fields.append(("prompt", p)) }
         req.httpMethod = "POST"
         req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         req.httpBody = WhisperHTTP.multipart(wav: data, fields: fields, boundary: boundary)
         let t0 = Date()
-        let task = URLSession.shared.dataTask(with: req) { data, resp, err in
-            let result = WhisperHTTP.parse(data: data, response: resp, error: err, source: source)
+        let task = session.dataTask(with: req) { data, resp, err in
+            let result = parse(data, resp, err)
             if case .success(let t) = result, let lang = t.language {
                 Log.w("\(tag) ok in \(String(format: "%.1f", Date().timeIntervalSince(t0)))s, \(t.text.count) chars, lang=\(lang)")
             }
