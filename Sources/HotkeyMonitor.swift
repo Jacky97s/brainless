@@ -18,6 +18,8 @@ final class HotkeyMonitor {
     private var bindings: [(shortcut: Shortcut, mode: Mode)] = []
     private var active: (shortcut: Shortcut, since: Date)?
     private var pending: DispatchWorkItem?
+    private var pendingBinding: (shortcut: Shortcut, mode: Mode)?
+    private var chordUsed = false
     private var learnOrder: [Int64] = []
     private var learnPeak: Set<Int64> = []
     private var debugCount = 0
@@ -37,7 +39,7 @@ final class HotkeyMonitor {
     func configure(_ shortcuts: [Mode: [Shortcut]]) {
         bindings = Mode.allCases.flatMap { m in (shortcuts[m] ?? []).map { (shortcut: $0, mode: m) } }
         active = nil
-        pending?.cancel(); pending = nil
+        pending?.cancel(); pending = nil; pendingBinding = nil
         Log.w("HotkeyMonitor: configured \(bindings.map { "\($0.mode.rawValue)=\($0.shortcut.modifiers)+\($0.shortcut.key.map(String.init) ?? "-")" })")
     }
 
@@ -111,7 +113,7 @@ final class HotkeyMonitor {
             return kc == 63 && fnOnly ? nil : pass
         case .keyDown:
             // 修飾鍵剛按齊時又按了一般鍵：使用者是在打組合字（例如 ⌥＋字母），不是要錄音
-            pending?.cancel(); pending = nil
+            pending?.cancel(); pending = nil; pendingBinding = nil
             if let a = active { return a.shortcut.key == kc ? nil : pass }
             guard let b = bindings.first(where: { $0.shortcut.key == kc && $0.shortcut.modifierSet == down }) else { return pass }
             press(b.shortcut, b.mode)
@@ -127,7 +129,16 @@ final class HotkeyMonitor {
 
     /// 只看修飾鍵的那幾組：按下的修飾鍵要剛好等於那一組，多按一顆都不算
     private func matchModifiers(_ down: Set<Int64>) {
-        pending?.cancel(); pending = nil
+        let waiting = pendingBinding
+        pending?.cancel(); pending = nil; pendingBinding = nil
+        // 等待期間鍵就放掉了、也沒打字：這是一次快按，要照樣觸發，不然使用者只能按住不放
+        if let w = waiting, !chordUsed, !w.shortcut.modifierSet.isSubset(of: down) {
+            press(w.shortcut, w.mode)
+            release()
+            chordUsed = !down.isEmpty
+            return
+        }
+        if down.isEmpty { chordUsed = false }
         guard !down.isEmpty, let b = bindings.first(where: { $0.shortcut.key == nil && $0.shortcut.modifierSet == down }) else { return }
         let longerExists = bindings.contains {
             $0.shortcut.key == nil ? down.isStrictSubset(of: $0.shortcut.modifierSet) : down.isSubset(of: $0.shortcut.modifierSet)
@@ -135,15 +146,17 @@ final class HotkeyMonitor {
         guard longerExists else { press(b.shortcut, b.mode); return }
         let work = DispatchWorkItem { [weak self] in
             guard let self = self, self.active == nil else { return }
-            self.pending = nil
+            self.pending = nil; self.pendingBinding = nil
             self.press(b.shortcut, b.mode)
         }
         pending = work
+        pendingBinding = b
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.chordGrace, execute: work)
     }
 
     private func press(_ s: Shortcut, _ m: Mode) {
         active = (s, Date())
+        chordUsed = true
         DispatchQueue.main.async { self.onPress?(m, s) }
     }
 
