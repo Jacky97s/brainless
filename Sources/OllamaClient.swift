@@ -52,7 +52,8 @@ final class OllamaClient {
         }.resume()
     }
 
-    func chat(system: String, user: String, completion: @escaping (Swift.Result<String, Error>) -> Void) {
+    @discardableResult
+    func chat(system: String, user: String, completion: @escaping (Swift.Result<String, Error>) -> Void) -> () -> Void {
         var req = URLRequest(url: base.appendingPathComponent("api/chat"))
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -71,7 +72,7 @@ final class OllamaClient {
         req.httpBody = try? JSONSerialization.data(withJSONObject: payload)
         req.timeoutInterval = 90
         let t0 = Date()
-        URLSession.shared.dataTask(with: req) { data, resp, err in
+        let task = URLSession.shared.dataTask(with: req) { data, resp, err in
             if let err = err { completion(.failure(err)); return }
             guard let data = data else {
                 completion(.failure(NSError(domain: "Whispry", code: 10, userInfo: [NSLocalizedDescriptionKey: "Ollama 沒有回應"])))
@@ -90,6 +91,8 @@ final class OllamaClient {
             }
             Log.w("ollama ok in \(String(format: "%.1f", Date().timeIntervalSince(t0)))s, \(content.count) chars")
             completion(.success(content))
-        }.resume()
+        }
+        task.resume()
+        return { task.cancel() }
     }
 }

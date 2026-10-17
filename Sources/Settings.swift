@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 /// 舊版的單一快捷鍵設定，只用來換算成 Settings.shortcuts
 enum HotkeyChoice: String {
@@ -74,6 +75,62 @@ enum SpeechLanguage: String, CaseIterable {
     var whisperCode: String { rawValue }
 }
 
+/// 鑰匙圈裡的遠端 API key
+enum RemoteKey: Equatable {
+    case none
+    case key(String)
+    /// 讀不到（例如使用者在存取提示按了拒絕），不是「沒有存」
+    case unreadable(OSStatus)
+
+    var value: String? { if case .key(let k) = self { return k } else { return nil } }
+}
+
+/// 鑰匙圈項目加上記憶體快取，讀鑰匙圈只發生在背景執行緒
+final class CachedSecret {
+    private static let service = "app.whispry.mac.remote-whisper"
+    private let account: String
+    private let lock = NSLock()
+    private var cache: RemoteKey?
+    private var version = 0
+
+    init(account: String) { self.account = account }
+
+    /// 只看記憶體，不碰鑰匙圈；還沒讀過時是 nil
+    var cached: RemoteKey? {
+        lock.lock(); defer { lock.unlock() }
+        return cache
+    }
+    /// 第一次（或上次讀失敗且 retryFailure）才讀鑰匙圈。讀取可能跳出存取提示而卡住，不要在主執行緒呼叫
+    func load(retryFailure: Bool = false) -> RemoteKey {
+        lock.lock()
+        let v = version
+        if let c = cache {
+            if case .unreadable = c, retryFailure {} else { lock.unlock(); return c }
+        }
+        lock.unlock()
+        let r = Keychain.get(service: Self.service, account: account)
+        let loaded: RemoteKey
+        switch r.status {
+        case errSecSuccess: loaded = r.value.map(RemoteKey.key) ?? .unreadable(errSecDecode)
+        case errSecItemNotFound: loaded = .none
+        default: loaded = .unreadable(r.status)
+        }
+        lock.lock(); defer { lock.unlock() }
+        // 讀的期間 set 已經寫過新值，以新值為準
+        if version == v { cache = loaded }
+        return cache ?? loaded
+    }
+    /// 空字串代表刪除。只有鑰匙圈寫入成功才更新記憶體裡的值
+    func set(_ key: String) -> OSStatus {
+        let status = Keychain.set(key, service: Self.service, account: account)
+        guard status == errSecSuccess else { return status }
+        lock.lock(); defer { lock.unlock() }
+        cache = key.isEmpty ? RemoteKey.none : .key(key)
+        version += 1
+        return status
+    }
+}
+
 final class Settings {
     static let shared = Settings()
     private let d = UserDefaults.standard
@@ -111,6 +168,56 @@ final class Settings {
         get { bool("fastWhisper", default: false) }
         set { d.set(newValue, forKey: "fastWhisper") }
     }
+    var speechEngine: SpeechEngine {
+        get { SpeechEngine(rawValue: d.string(forKey: "speechEngine") ?? "") ?? .local }
+        set { d.set(newValue.rawValue, forKey: "speechEngine") }
+    }
+    var remoteWhisperURL: String {
+        get { d.string(forKey: "remoteWhisperURL") ?? "" }
+        set { d.set(newValue, forKey: "remoteWhisperURL") }
+    }
+    static let defaultRemoteModel = "whisper-large-v3"
+    /// 端點留空就用 Groq；填了但格式不對仍然算沒設定，不會偷偷換成 Groq
+    static let defaultEndpoint = "https://api.groq.com/openai/v1"
+    static let defaultChatModel = "llama-3.3-70b-versatile"
+    var remoteWhisperModel: String {
+        get { d.string(forKey: "remoteWhisperModel") ?? Settings.defaultRemoteModel }
+        set { d.set(newValue, forKey: "remoteWhisperModel") }
+    }
+    /// 字串在這裡一次解析完；模型留白就用預設
+    var remoteWhisper: RemoteWhisperConfig? {
+        guard let url = Settings.parseEndpoint(remoteWhisperURL, orDefault: Settings.defaultEndpoint) else { return nil }
+        let model = remoteWhisperModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        return RemoteWhisperConfig(baseURL: url, model: model.isEmpty ? Settings.defaultRemoteModel : model)
+    }
+    var remoteChatURL: String {
+        get { d.string(forKey: "remoteChatURL") ?? "" }
+        set { d.set(newValue, forKey: "remoteChatURL") }
+    }
+    var remoteChatModel: String {
+        get { d.string(forKey: "remoteChatModel") ?? "" }
+        set { d.set(newValue, forKey: "remoteChatModel") }
+    }
+    /// 潤稿沒有安全的預設模型，留白就是還沒設定
+    var remoteChat: RemoteChatConfig? {
+        let typed = remoteChatModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        let model = typed.isEmpty ? Settings.defaultChatModel : typed
+        guard let url = Settings.parseEndpoint(remoteChatURL, orDefault: Settings.defaultEndpoint) else { return nil }
+        return RemoteChatConfig(baseURL: url, model: model)
+    }
+    /// http／https、有主機、沒有帳密，結尾的斜線去掉
+    private static func parseEndpoint(_ raw: String, orDefault fallback: String) -> URL? {
+        var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.isEmpty { s = fallback }
+        while s.hasSuffix("/") { s.removeLast() }
+        guard let url = URL(string: s), let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
+              let host = url.host, !host.isEmpty, url.user == nil, url.password == nil else { return nil }
+        return url
+    }
+    /// 遠端辨識與遠端潤稿各用一把 key，同一個鑰匙圈 service
+    let whisperKey = CachedSecret(account: "api-key")
+    let chatKey = CachedSecret(account: "chat-api-key")
+
     var micKeepAlive: MicKeepAlive {
         get { MicKeepAlive(rawValue: d.string(forKey: "micKeepAlive") ?? "") ?? .always }
         set { d.set(newValue.rawValue, forKey: "micKeepAlive") }
@@ -119,9 +226,19 @@ final class Settings {
         get { SpeechLanguage(rawValue: d.string(forKey: "language") ?? "") ?? .auto }
         set { d.set(newValue.rawValue, forKey: "language") }
     }
+    /// 聽寫的逐字稿（不含空白）少於這個字數就不送 LLM，直接貼；0 代表關掉
+    var refineMinChars: Int {
+        get { d.object(forKey: "refineMinChars") == nil ? 12 : d.integer(forKey: "refineMinChars") }
+        set { d.set(newValue, forKey: "refineMinChars") }
+    }
+    static let refineMinCharChoices = [0, 8, 12, 20, 30]
     var refine: Bool {
         get { bool("refine", default: true) }
         set { d.set(newValue, forKey: "refine") }
+    }
+    var holdToTalk: Bool {
+        get { bool("holdToTalk", default: false) }
+        set { d.set(newValue, forKey: "holdToTalk") }
     }
     var sounds: Bool {
         get { bool("sounds", default: true) }
@@ -169,8 +286,13 @@ final class Settings {
         get { d.string(forKey: "modelImagePath") ?? "" }
         set { d.set(newValue, forKey: "modelImagePath") }
     }
+    var localWhisperModel: LocalWhisperModel {
+        get { LocalWhisperModel(rawValue: d.string(forKey: "localWhisperModel") ?? "") ?? .largeV3 }
+        set { d.set(newValue.rawValue, forKey: "localWhisperModel") }
+    }
+    /// 明確設過 whisperModelPath 就用它，否則依選的本機模型落在 modelsDir
     var whisperModelPath: String {
-        get { d.string(forKey: "whisperModelPath") ?? (modelsDir as NSString).appendingPathComponent(ModelSetup.whisperModelFileName) }
+        get { d.string(forKey: "whisperModelPath") ?? localWhisperModel.path(inModelsDir: modelsDir) }
         set { d.set(newValue, forKey: "whisperModelPath") }
     }
     var whisperPort: Int {

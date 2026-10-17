@@ -27,7 +27,7 @@ final class LevelMeterView: NSView {
 final class OverlayPanel: NSPanel {
     enum Display {
         case listening(hotkey: String, mode: String)
-        case transcribing
+        case transcribing(String)
         case refining(String)
         case done(String)
         case error(String)
@@ -102,10 +102,10 @@ final class OverlayPanel: NSPanel {
             subtitleLabel.frame.size.width = 200
             meter.isHidden = false
             meter.reset()
-        case .transcribing:
+        case .transcribing(let who):
             setIcon("waveform")
             titleLabel.stringValue = "辨識中…"
-            subtitleLabel.stringValue = "Whisper large-v3 正在聽"
+            subtitleLabel.stringValue = "\(who) 正在聽"
         case .refining(let who):
             setIcon("pencil.line")
             titleLabel.stringValue = "潤稿中…"

@@ -1,7 +1,7 @@
 import AppKit
 import CoreGraphics
 
-/// 把文字放進目前游標所在的 App：寫進剪貼簿、模擬 ⌘V，再把原本的剪貼簿還原。
+/// 把文字放進剪貼簿，必要時模擬 ⌘V 貼進目前游標所在的 App。
 enum TextInserter {
     private static func snapshotPasteboard() -> [[NSPasteboard.PasteboardType: Data]] {
         let pb = NSPasteboard.general
@@ -35,17 +35,17 @@ enum TextInserter {
         up.post(tap: .cghidEventTap)
     }
 
-    static func paste(_ text: String, completion: (() -> Void)? = nil) {
-        let snap = snapshotPasteboard()
+    /// 結果一律留在剪貼簿，不還原舊內容，貼失敗時使用者還能自己貼。
+    static func copy(_ text: String) {
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(text, forType: .string)
+    }
+
+    static func pasteFromClipboard(completion: (() -> Void)? = nil) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
             postKey(9, flags: .maskCommand) // ⌘V
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
-                restorePasteboard(snap)
-                completion?()
-            }
+            completion?()
         }
     }
 

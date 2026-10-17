@@ -330,7 +330,7 @@ struct HomePage: View {
             }
             Block("引擎") {
                 RowGroup {
-                    Row("語音辨識", detail: "whisper.cpp \(model.whisperModelName)") { status(model.whisperOK, model.whisperStatus) }
+                    Row("語音辨識", detail: model.transcriberLabel) { status(model.whisperOK, model.whisperStatus) }
                     Row("潤稿、翻譯、問任何事", detail: model.refinerLabel) { status(model.refinerOK, model.refinerStatus) }
                     if model.usesImage {
                         Row("模型磁碟映像") { status(model.volumeMounted, model.volumeMounted ? "已掛載" : "未掛載") }
@@ -645,11 +645,13 @@ struct SettingsPage: View {
             if model.setupNeeded {
                 SetupCard(model: model, downloader: model.downloader, puller: model.puller)
             }
-            Block("快捷鍵", note: "幾顆修飾鍵一起按（左 Shift＋左 Option），或修飾鍵加一顆鍵（左 Option＋Space）都可以。按一下開始、再按一下結束；按住說完放開也可以。") {
+            Block("快捷鍵", note: "幾顆修飾鍵一起按（左 Shift＋左 Option），或修飾鍵加一顆鍵（左 Option＋Space）都可以。按一下開始、再按一下結束。") {
                 RowGroup {
                     ForEach(Mode.allCases, id: \.self) { m in ShortcutEditor(mode: m, model: model) }
+                    Row("按住說話", detail: "按住超過 0.6 秒、放開就結束；關掉時一律按一下開始、再按一下結束") { toggle(model.holdToTalk) { model.onSetHoldToTalk?($0) } }
                 }
             }
+            SpeechEngineBlock(model: model)
             Block("翻譯成") {
                 FlowLayout(spacing: 8) {
                     ForEach(Settings.translateTargets, id: \.self) { t in
@@ -670,9 +672,7 @@ struct SettingsPage: View {
                     }
                 }
             }
-            Block("潤稿", note: model.resolvedBackend == .ollama
-                    ? "Ollama 在這台電腦上跑模型，錄音與文字都不離開這台電腦。"
-                    : "用本機已登入的 \(model.resolvedBackend.title) CLI 潤稿，額度算在你的帳號上。錄音只在本機辨識，但逐字稿會送到它的雲端模型；要完全不離開這台電腦請選 Ollama。") {
+            Block("潤稿", note: refineNote) {
                 FlowLayout(spacing: 8) {
                     ChoiceChip(text: "自動", selected: model.refineBackend.isEmpty) { model.onSetBackend?("") }
                     ForEach(RefineBackend.allCases, id: \.self) { b in
@@ -681,13 +681,24 @@ struct SettingsPage: View {
                 }
                 RowGroup {
                     Row("AI 潤稿", detail: "去贅字、補標點、轉繁體") { toggle(model.refine) { model.onSetRefine?($0) } }
+                    Row("短句不潤稿", detail: "聽寫少於這個字數就直接貼，省下等 AI 的時間；代價是同音字、詞典裡的專有名詞不會被修正。翻譯與問任何事不受影響。") {
+                        HStack(spacing: 6) {
+                            ForEach(Settings.refineMinCharChoices, id: \.self) { n in
+                                ChoiceChip(text: n == 0 ? "關" : "\(n)", selected: model.refineMinChars == n) { model.onSetRefineMinChars?(n) }
+                            }
+                        }
+                    }
                     Row("目前使用", detail: model.refinerLabel) {
                         HStack(spacing: 6) {
                             StatusDot(ok: model.refinerOK)
                             Text(model.refinerStatus).font(Theme.small).foregroundColor(Theme.muted)
                         }
                     }
-                    if model.resolvedBackend != .ollama {
+                    if model.resolvedBackend == .openai {
+                        EndpointRows(url: model.remoteChatURL, modelName: model.remoteChatModel, hasKey: model.hasChatKey,
+                                     urlPlaceholder: "留空用 Groq", modelPlaceholder: "留空用 \(Settings.defaultChatModel)", keyPlaceholder: "必填",
+                                     onSetConfig: { model.onSetRemoteChat?($0, $1) }, onSetKey: { model.onSetChatKey?($0) })
+                    } else if model.resolvedBackend != .ollama {
                         Row("模型") {
                             TextField(model.resolvedBackend == .codex ? "用 codex 預設" : "haiku", text: Binding(get: { model.agentModel }, set: { model.onSetAgentModel?($0) }))
                                 .textFieldStyle(.plain).multilineTextAlignment(.trailing).frame(width: 160)
@@ -695,6 +706,9 @@ struct SettingsPage: View {
                     } else {
                         Row("模型常駐記憶體", detail: "關掉的話閒置 30 分鐘會卸載，下次要多等十幾秒") { toggle(model.keepModelLoaded) { model.onSetKeepModelLoaded?($0) } }
                     }
+                }
+                if model.resolvedBackend == .openai && model.chatSendsKeyInClear && model.hasChatKey {
+                    Text("這個端點不是 https，API key 會以明文傳送。").font(Theme.small).foregroundColor(Theme.muted)
                 }
             }
             Block("麥克風", note: "USB 麥克風閒置幾分鐘就會被系統休眠，醒來的前兩三秒是靜音。讓通道一直開著就隨按隨有聲音；代價是選單列會一直有橘色麥克風點（沒按快捷鍵時不存、不送任何聲音）。") {
@@ -723,7 +737,168 @@ struct SettingsPage: View {
         }
     }
 
+    private var refineNote: String {
+        switch model.resolvedBackend {
+        case .ollama: return "Ollama 在這台電腦上跑模型，潤稿的文字不離開這台電腦。"
+        case .openai: return "逐字稿會送到你設定的端點（\(model.chatHost.isEmpty ? "尚未設定" : model.chatHost)），不是這台電腦；API Key 存在 macOS 鑰匙圈。Groq、OpenRouter、OpenAI 或任何 OpenAI 相容的服務都可以，不會被「自動」選到。"
+        case .claude, .codex: return "用本機已登入的 \(model.resolvedBackend.title) CLI 潤稿，額度算在你的帳號上。逐字稿會送到它的雲端模型；要潤稿不離開這台電腦請選 Ollama。"
+        }
+    }
+
     private func toggle(_ value: Bool, _ set: @escaping (Bool) -> Void) -> some View { Switch(on: value, set: set) }
+}
+
+/// 語音辨識跑在本機或遠端
+struct SpeechEngineBlock: View {
+    @ObservedObject var model: HubModel
+    var body: some View {
+        Block("語音辨識", note: model.speechEngine == .local
+                ? "預設在這台電腦上跑 whisper.cpp。遠端要自己提供 OpenAI 相容的端點（Groq、OpenAI、speaches、whisper.cpp server 都可以）。"
+                : "遠端模式下錄音會離開這台電腦，送到上面的端點；API Key 存在 macOS 鑰匙圈。「快速辨識」只在本機辨識時有用。") {
+            FlowLayout(spacing: 8) {
+                ChoiceChip(text: "本機", selected: model.speechEngine == .local) { model.onSetSpeechEngine?(.local) }
+                ChoiceChip(text: "遠端（OpenAI 相容）", selected: model.speechEngine == .remote) { model.onSetSpeechEngine?(.remote) }
+            }
+            if model.speechEngine == .local {
+                FlowLayout(spacing: 8) {
+                    ForEach(LocalWhisperModel.allCases, id: \.self) { m in
+                        ChoiceChip(text: m.title, selected: model.localWhisperModel == m) { model.onSetLocalWhisperModel?(m) }
+                    }
+                }
+                Text("large-v3 最準，但每句要算比較久、佔 3.1 GB。large-v3-turbo 只有 1.6 GB，解碼快很多，準確度略低一點，換模型時會重啟本機引擎。")
+                    .font(Theme.small).foregroundColor(Theme.muted).fixedSize(horizontal: false, vertical: true)
+                if !model.whisperModelPresent {
+                    WhisperDownloadRow(model: model, downloader: model.downloader)
+                }
+            }
+            if model.speechEngine == .remote {
+                RowGroup {
+                    EndpointRows(url: model.remoteWhisperURL, modelName: model.remoteWhisperModel, hasKey: model.hasRemoteKey,
+                                 urlPlaceholder: "留空用 Groq", modelPlaceholder: "留空用 \(Settings.defaultRemoteModel)", keyPlaceholder: "Groq 必填",
+                                 onSetConfig: { model.onSetRemoteWhisper?($0, $1) }, onSetKey: { model.onSetRemoteKey?($0) })
+                    Row("狀態") {
+                        HStack(spacing: 6) {
+                            StatusDot(ok: model.whisperOK)
+                            Text(model.whisperStatus).font(Theme.small).foregroundColor(Theme.muted)
+                                .multilineTextAlignment(.trailing).fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+                if model.remoteSendsKeyInClear && model.hasRemoteKey {
+                    Text("這個端點不是 https，API key 會以明文傳送。").font(Theme.small).foregroundColor(Theme.muted)
+                }
+            }
+        }
+    }
+}
+
+/// 選到的本機模型檔不在時的下載列；進度在 downloader 上，要自己觀察才會重繪
+struct WhisperDownloadRow: View {
+    @ObservedObject var model: HubModel
+    @ObservedObject var downloader: ModelDownloader
+    var body: some View {
+        HStack(spacing: 10) {
+            if downloader.running {
+                ProgressView(value: downloader.progress).frame(maxWidth: 240)
+                Text("下載中 \(Int(downloader.progress * 100))%").font(Theme.small).foregroundColor(Theme.muted)
+            } else {
+                TextAction("下載 \(model.localWhisperModel.shortName)") { model.onDownloadWhisper?() }
+                if let e = downloader.error { Text(e).font(Theme.small).foregroundColor(Theme.orange) }
+            }
+        }
+    }
+}
+
+/// 端點、模型、API Key 三列。文字欄位用草稿，送出或離開欄位才提交（打字停頓也會提交），因為每次提交都會重跑連線檢查
+struct EndpointRows: View {
+    let url: String
+    let modelName: String
+    let hasKey: Bool
+    let urlPlaceholder: String
+    let modelPlaceholder: String
+    let keyPlaceholder: String
+    let onSetConfig: (_ url: String, _ model: String) -> Void
+    let onSetKey: (String) -> Void
+    private enum Field { case url, model, key }
+    @FocusState private var focus: Field?
+    @State private var urlDraft = ""
+    @State private var modelDraft = ""
+    @State private var keyDraft = ""
+    @State private var configTask: Task<Void, Never>?
+    @State private var keyTask: Task<Void, Never>?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Row("端點") {
+                TextField(urlPlaceholder, text: $urlDraft)
+                    .focused($focus, equals: .url).onSubmit(commitConfig)
+                    .textFieldStyle(.plain).multilineTextAlignment(.trailing).frame(width: 280)
+            }
+            Row("模型") {
+                TextField(modelPlaceholder, text: $modelDraft)
+                    .focused($focus, equals: .model).onSubmit(commitConfig)
+                    .textFieldStyle(.plain).multilineTextAlignment(.trailing).frame(width: 280)
+            }
+            Row("API Key") {
+                HStack(spacing: 12) {
+                    if hasKey && keyDraft.isEmpty {
+                        TextAction("清除") { onSetKey("") }
+                    }
+                    SecureField(hasKey ? "已儲存" : keyPlaceholder, text: $keyDraft)
+                        .focused($focus, equals: .key).onSubmit(commitKey)
+                        .textFieldStyle(.plain).multilineTextAlignment(.trailing).frame(width: 200)
+                }
+            }
+        }
+        .onAppear {
+            urlDraft = url
+            modelDraft = modelName
+        }
+        .onChange(of: focus) { old, _ in
+            switch old {
+            case .url, .model: commitConfig()
+            case .key: commitKey()
+            case nil: break
+            }
+        }
+        .onChange(of: urlDraft) { _, _ in scheduleConfig() }
+        .onChange(of: modelDraft) { _, _ in scheduleConfig() }
+        .onChange(of: keyDraft) { _, _ in scheduleKey() }
+        .onDisappear {
+            commitConfig()
+            commitKey()
+        }
+    }
+
+    private func scheduleConfig() {
+        configTask?.cancel()
+        configTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            if !Task.isCancelled { commitConfig() }
+        }
+    }
+
+    private func scheduleKey() {
+        keyTask?.cancel()
+        guard !keyDraft.isEmpty else { return }
+        keyTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            if !Task.isCancelled { commitKey() }
+        }
+    }
+
+    private func commitConfig() {
+        configTask?.cancel()
+        guard urlDraft != url || modelDraft != modelName else { return }
+        onSetConfig(urlDraft, modelDraft)
+    }
+
+    private func commitKey() {
+        keyTask?.cancel()
+        guard !keyDraft.isEmpty else { return }
+        onSetKey(keyDraft)
+        keyDraft = ""
+    }
 }
 
 /// 一個模式的快捷鍵：列出每一組（可刪），加一組時進入學習模式
