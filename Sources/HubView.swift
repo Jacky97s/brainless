@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 enum Theme {
     static func dyn(_ light: NSColor, _ dark: NSColor) -> Color {
@@ -393,9 +394,16 @@ struct HistoryRow: View {
 struct DictionaryPage: View {
     @ObservedObject var dict: DictionaryStore
     @State private var newWord = ""
+    @State private var importMessage: String?
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("詞典").font(.system(size: 32, weight: .bold))
+            HStack {
+                Text("詞典").font(.system(size: 32, weight: .bold))
+                Spacer()
+                Button("從 Typeless 匯入") { importTypeless() }
+                Button("從檔案匯入…") { importFile() }
+            }
+            if let m = importMessage { Text(m).font(.system(size: 12)).foregroundColor(.secondary) }
             Text("把常講的專有名詞、人名、公司名、產品名放進來。辨識和潤稿時會優先用這些寫法，中英夾雜的詞最有效。")
                 .foregroundColor(.secondary).font(.system(size: 13))
             HStack {
@@ -425,6 +433,31 @@ struct DictionaryPage: View {
             Spacer(minLength: 0)
         }
         .padding(36)
+    }
+
+    private func importTypeless() {
+        switch DictionaryImport.typelessCachedTerms() {
+        case .failure(let e): importMessage = e.message
+        case .success(let r):
+            let n = dict.addMany(r.terms)
+            let when = r.cachedAt.formatted(date: .abbreviated, time: .shortened)
+            importMessage = "Typeless 詞典（\(when) 的快取）共 \(r.terms.count) 個詞，新增 \(n) 個。要匯入最新的，先在 Typeless 打開詞典頁再按一次。"
+            Log.w("typeless import: \(r.terms.count) terms, \(n) new")
+        }
+    }
+
+    private func importFile() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.plainText, .commaSeparatedText, .json]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        switch DictionaryImport.terms(fromFile: url) {
+        case .failure(let e): importMessage = e.message
+        case .success(let terms):
+            let n = dict.addMany(terms)
+            importMessage = "\(url.lastPathComponent)：共 \(terms.count) 個詞，新增 \(n) 個。"
+            Log.w("file import: \(terms.count) terms, \(n) new")
+        }
     }
 }
 

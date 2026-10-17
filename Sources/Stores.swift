@@ -103,6 +103,15 @@ final class DictionaryStore: ObservableObject {
         words.insert(t, at: 0); save()
     }
     func remove(_ w: String) { words.removeAll { $0 == w }; save() }
+    /// 匯入的詞接在最後，不擠掉原本排在前面、每次都會帶給潤稿模型的核心詞；回傳實際新增幾個
+    @discardableResult
+    func addMany(_ ws: [String]) -> Int {
+        var seen = Set(words)
+        let fresh = ws.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty && seen.insert($0).inserted }
+        guard !fresh.isEmpty else { return 0 }
+        words += fresh; save()
+        return fresh.count
+    }
 
     /// 給 Whisper 的提示（有長度上限）
     var whisperHint: String {
