@@ -79,7 +79,7 @@ agent 在一個空資料夾（`~/Library/Application Support/Whispry/agent-workd
 | whisper.cpp server | `http://你的主機:8080/v1` | 隨便填（server 不看） |
 
 - API Key 只存在 macOS 鑰匙圈（服務名 `app.whispry.mac.remote-whisper`），不寫進偏好設定、不進記錄檔。自架的服務不需要 Key 就留白。
-- 端點、模型填好按 Enter（或點到別的欄位）才會生效，並馬上檢查連不連得上：`GET <端點>/models`，401／403 代表 Key 被拒絕，其他任何 HTTP 回應都算連得上（whisper.cpp server 沒有 `/models`，回 404 也能用）。
+- 端點、模型填好按 Enter（或點到別的欄位）才會生效，並馬上檢查連不連得上：`GET <端點>/models`，401／403 代表 Key 被拒絕，3xx 轉址不會跟隨、算失敗（Key 不會被帶到別的主機），其他任何 HTTP 回應都算連得上（whisper.cpp server 沒有 `/models`，回 404 也能用）。
 - 遠端模式不會啟動本機的 whisper-server，也不需要下載 Whisper 模型。「快速辨識」只在本機辨識時有用。
 - **遠端模式下，錄音會離開這台電腦**，送到你填的端點。要全程離線就留在「本機」。
 
@@ -140,7 +140,8 @@ SDK=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk ./build.sh
 
 ## 隱私
 
-- 辨識選「本機」時（預設），聲音只送到本機的 `127.0.0.1:8178`（whisper-server）。**選「遠端」時，錄音會送到你填的端點**（例如 Groq）。兩種情況錄音檔辨識完都會刪掉。
+- 辨識選「本機」時（預設），聲音只送到本機的 `127.0.0.1:8178`（whisper-server）。**選「遠端」時，錄音會送到你填的端點**（例如 Groq），詞典裡的詞也會放在 Whisper 的 prompt 裡一起送過去。兩種情況錄音檔辨識完都會刪掉。
+- 遠端端點用 `http` 時，錄音和 API Key 都以明文傳送，設定頁會提醒。macOS 的 ATS 會擋掉連到公開網域名稱的 `http`；`http` 只能用在 IP 位址、`.local` 和 `localhost`。
 - **潤稿用 Claude Code 或 Codex 時，辨識出來的文字（以及「問任何事」選取的文字）會透過該 CLI 送到 Anthropic／OpenAI 的雲端模型。** 要完全不離開這台電腦，請在設定頁把潤稿後端改成 Ollama（`127.0.0.1:11434`）。主視窗左下角會顯示目前是哪一種。
 - 歷史紀錄與詞典存在 `~/Library/Application Support/Whispry/`，檔案權限 600。
 - 記錄檔不存逐字稿內容，只記字數與耗時。遠端辨識的 API Key 存在鑰匙圈，不寫進任何檔案。
@@ -169,12 +170,12 @@ Speech recognition runs locally on Whisper large-v3 (whisper.cpp, Metal) by defa
 
 **Install**: download `Brainless-x.y.z.dmg` from this repo's Releases and drag `Brainless.app` to Applications, or build it (below) if there is no release yet (upstream releases are the original app without these changes); right-click › Open the first time (ad-hoc signed), grant Microphone and Accessibility, then follow the setup list in the main window: `brew install whisper-cpp`, download the Whisper model (3.1 GB), and sign in to Claude Code or Codex (or install Ollama and pull `qwen3.5:9b`).
 
-**Remote speech recognition**: Settings › 語音辨識 › 遠端 takes an endpoint, a model and an optional API key, for example `https://api.groq.com/openai/v1` with `whisper-large-v3`, `https://api.openai.com/v1` with `whisper-1`, a speaches server (`http://host:8000/v1`) or a whisper.cpp server (`http://host:8080/v1`). The key lives in the macOS Keychain (service `app.whispry.mac.remote-whisper`), never in preferences or logs. The app probes `GET <endpoint>/models`; 401/403 means the key was rejected, any other HTTP response counts as reachable. Remote mode does not start the local whisper-server, and the fast-recognition toggle only applies locally.
+**Remote speech recognition**: Settings › 語音辨識 › 遠端 takes an endpoint, a model and an optional API key, for example `https://api.groq.com/openai/v1` with `whisper-large-v3`, `https://api.openai.com/v1` with `whisper-1`, a speaches server (`http://host:8000/v1`) or a whisper.cpp server (`http://host:8080/v1`). The key lives in the macOS Keychain (service `app.whispry.mac.remote-whisper`), never in preferences or logs. The app probes `GET <endpoint>/models`; 401/403 means the key was rejected, redirects are not followed and count as a failure (so the key never goes to another host), any other HTTP response counts as reachable. Remote mode does not start the local whisper-server, and the fast-recognition toggle only applies locally.
 
 **Refine backends**: Settings › 潤稿 defaults to auto (first found of Claude Code → Codex → Ollama). Claude Code runs `claude -p` with `haiku`, no tools, no user settings or MCP, no session persistence; Codex runs `codex exec` in a read-only sandbox with low reasoning effort. Both run in an empty working directory. Expect a few seconds per request, versus under a second for a warm Ollama model.
 
 **Build**: `./build.sh` with Xcode Command Line Tools only; `./release.sh` packages `build/Brainless-<version>.dmg` (version from `Info.plist`), and `./release.sh --publish` also creates the GitHub release with `gh`. If the default macOS 27 SDK fails on `@State` (missing SwiftUI macro plugin), run `SDK=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk ./build.sh`.
 
-**Privacy**: with local recognition (the default) audio goes only to the local whisper-server (127.0.0.1:8178); with remote recognition it is uploaded to the endpoint you configured. With the Claude Code or Codex backend, the transcript (and any selected text in "ask" mode) is sent to Anthropic/OpenAI through that CLI; choose Ollama (127.0.0.1:11434) to keep everything on-device. The sidebar shows which applies. History and dictionary live in `~/Library/Application Support/Whispry/` with 600 permissions; logs never contain transcripts; no telemetry, no account.
+**Privacy**: with local recognition (the default) audio goes only to the local whisper-server (127.0.0.1:8178); with remote recognition it is uploaded to the endpoint you configured, together with your dictionary terms (sent in the Whisper prompt). Over plain `http` the audio and API key travel unencrypted; macOS App Transport Security blocks `http` to public domain names, so `http` only works for IP addresses, `.local` hosts and `localhost`. With the Claude Code or Codex backend, the transcript (and any selected text in "ask" mode) is sent to Anthropic/OpenAI through that CLI; choose Ollama (127.0.0.1:11434) to keep everything on-device. The sidebar shows which applies. History and dictionary live in `~/Library/Application Support/Whispry/` with 600 permissions; logs never contain transcripts; no telemetry, no account.
 
 MIT License. Original work © Austin Chien; changes in this fork © Jacky97s.
