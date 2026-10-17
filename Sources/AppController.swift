@@ -34,14 +34,13 @@ final class AppController: NSObject, NSApplicationDelegate {
     private let hotkey = HotkeyMonitor()
     private let recorder = AudioRecorder()
     private let whisper = WhisperServer()
-    private let ollama = OllamaClient()
+    private let refiner = RefineService()
     private let overlay = OverlayPanel()
     private let history = HistoryStore()
     private let dict = DictionaryStore()
     private let hub = HubModel()
     private let hubWindow = HubWindowController()
     private var statusItem: NSStatusItem!
-    private var ollamaStatus: OllamaClient.Status = .notRunning
     private var pressStartedRecording = false
     private var recordingStartedAt = Date.distantPast
     private var autoStopTimer: Timer?
@@ -66,12 +65,12 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
         mountAndStartEngines()
         Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
-            self?.refreshOllama()
+            self?.refreshRefiner()
             if self?.state == .idle { self?.whisper.checkHealth() }
         }
         Timer.scheduledTimer(withTimeInterval: 1200, repeats: true) { [weak self] _ in
-            guard let self = self, self.settings.keepModelLoaded, self.settings.refine, self.ollamaStatus == .ready else { return }
-            self.ollama.warmUp()
+            guard let self = self, self.settings.keepModelLoaded, self.settings.refine, self.refiner.isReady else { return }
+            self.refiner.warmUp()
         }
 
         recorder.onLevel = { [weak self] l in self?.overlay.level(l) }
@@ -110,8 +109,13 @@ final class AppController: NSObject, NSApplicationDelegate {
                 } else {
                     self.whisper.start()
                 }
-                VolumeManager.ensureOllamaRunning()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 4) { self.refreshOllama() }
+                self.refiner.refresh { _ in
+                    self.rebuildMenu()
+                    self.syncHub()
+                    guard self.refiner.backend == .ollama else { return }
+                    VolumeManager.ensureOllamaRunning()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 4) { self.refreshRefiner() }
+                }
                 self.rebuildMenu()
                 self.syncHub()
             }
@@ -129,7 +133,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         hub.onSetRefine = { [weak self] v in
             guard let self = self else { return }
             self.settings.refine = v
-            if v && self.ollamaStatus == .ready { self.ollama.warmUp() }
+            if v && self.refiner.isReady { self.refiner.warmUp() }
             self.afterSettingsChange()
         }
         hub.onSetSounds = { [weak self] v in self?.settings.sounds = v; self?.afterSettingsChange() }
@@ -157,6 +161,16 @@ final class AppController: NSObject, NSApplicationDelegate {
             self.whisper.start()
             self.syncHub()
         }
+        hub.onSetBackend = { [weak self] b in self?.setBackend(b) }
+        hub.onSetAgentModel = { [weak self] m in
+            guard let self = self else { return }
+            switch self.refiner.backend {
+            case .claude: self.settings.claudeModel = m
+            case .codex: self.settings.codexModel = m
+            case .ollama: return
+            }
+            self.afterSettingsChange()
+        }
         hub.onPullModel = { [weak self] in
             guard let self = self else { return }
             VolumeManager.ensureOllamaRunning()
@@ -164,7 +178,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
         hub.puller.onDone = { [weak self] in
             self?.overlay.show(.info("潤稿模型下載完成"))
-            self?.refreshOllama()
+            self?.refreshRefiner()
         }
         syncHub()
     }
@@ -181,8 +195,13 @@ final class AppController: NSObject, NSApplicationDelegate {
         hub.loginEnabled = SMAppService.mainApp.status == .enabled
         hub.whisperOK = whisper.isReady
         hub.whisperStatus = whisperStatusText()
-        hub.ollamaOK = ollamaStatus == .ready
-        hub.ollamaStatus = ollamaStatusText()
+        hub.refinerOK = refiner.isReady
+        hub.refinerStatus = refiner.statusText
+        hub.refinerLabel = refiner.label
+        hub.refineBackend = settings.refineBackend
+        hub.resolvedBackend = refiner.backend
+        hub.installedBackends = Set(RefineBackend.allCases.filter { refiner.isInstalled($0) })
+        hub.agentModel = refiner.backend == .ollama ? "" : refiner.model
         hub.ollamaModel = settings.ollamaModel
         hub.whisperModelName = URL(fileURLWithPath: settings.whisperModelPath).deletingPathExtension().lastPathComponent.replacingOccurrences(of: "ggml-", with: "")
         hub.volumeMounted = VolumeManager.isMounted
@@ -239,17 +258,27 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func refreshOllama() {
-        ollama.checkStatus { [weak self] s in
+    private func refreshRefiner() {
+        refiner.refresh { [weak self] changed in
             guard let self = self else { return }
-            let changed = s != self.ollamaStatus
-            self.ollamaStatus = s
             if changed { self.rebuildMenu(); self.syncHub() }
-            if s == .ready && !self.warmedUp && self.settings.refine {
+            if self.refiner.isReady && !self.warmedUp && self.settings.refine {
                 self.warmedUp = true
-                self.ollama.warmUp()
+                self.refiner.warmUp()
             }
         }
+    }
+
+    private func setBackend(_ raw: String) {
+        let before = refiner.backend
+        settings.refineBackend = raw
+        let after = refiner.backend
+        if before == .ollama && after != .ollama { refiner.unloadOllama() }
+        if after == .ollama { VolumeManager.ensureOllamaRunning() }
+        warmedUp = false
+        overlay.show(.info("潤稿改用 \(refiner.label)"))
+        afterSettingsChange()
+        refreshRefiner()
     }
 
     // MARK: - hotkey
@@ -431,23 +460,24 @@ final class AppController: NSObject, NSApplicationDelegate {
     private func afterTranscript(_ text: String, mode: Mode, selection: String?, seconds: Double) {
         let needsLLM = settings.refine || mode != .dictate
         guard needsLLM else { insert(text, raw: text, mode: mode, seconds: seconds); return }
-        guard ollamaStatus == .ready else {
+        let who = refiner.backend.title
+        guard refiner.isReady else {
             if mode == .dictate {
-                overlay.show(.info("Qwen 還沒準備好，先貼原文"))
+                overlay.show(.info("\(who) 還沒準備好，先貼原文"))
                 insert(text, raw: text, mode: mode, seconds: seconds)
             } else {
-                fail("Qwen 還沒準備好：\(ollamaStatusText())")
+                fail("\(who) 還沒準備好：\(refiner.statusText)")
             }
             return
         }
         state = .refining
-        overlay.show(.refining)
+        overlay.show(.refining(refiner.label))
         let user: String
         switch mode {
         case .dictate, .translate: user = Prompts.transcriptUser(text)
         case .ask: user = Prompts.askUser(selected: selection, command: text)
         }
-        ollama.chat(system: systemPrompt(for: mode, transcript: text), user: user) { [weak self] result in
+        refiner.chat(system: systemPrompt(for: mode, transcript: text), user: user) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 switch result {
@@ -457,18 +487,18 @@ final class AppController: NSObject, NSApplicationDelegate {
                     }
                     if mode == .dictate && Prompts.looksLikeReply(raw: text, out: out) {
                         Log.w("llm reply suspected (\(text.count) -> \(out.count) chars), using raw transcript")
-                        self.overlay.show(.info("Qwen 想回話，改貼原文"))
+                        self.overlay.show(.info("\(who) 想回話，改貼原文"))
                         self.insert(text, raw: text, mode: mode, seconds: seconds)
                         return
                     }
                     self.insert(out.isEmpty ? text : out, raw: text, mode: mode, seconds: seconds)
                 case .failure(let e):
-                    Log.w("ollama failed: \(e)")
+                    Log.w("refine failed: \(e)")
                     if mode == .dictate {
-                        self.overlay.show(.info("Qwen 沒回應，先貼原文"))
+                        self.overlay.show(.info("\(who) 沒回應，先貼原文"))
                         self.insert(text, raw: text, mode: mode, seconds: seconds)
                     } else {
-                        self.fail("Qwen 失敗：\(e.localizedDescription)")
+                        self.fail(e.localizedDescription)
                     }
                 }
             }
@@ -484,15 +514,15 @@ final class AppController: NSObject, NSApplicationDelegate {
         TextInserter.paste(text) { [weak self] in
             guard let self = self else { return }
             self.state = .idle
-            if self.ollamaStatus == .ready && self.settings.refine { self.ollama.warmUp() }
+            if self.refiner.isReady && self.settings.refine { self.refiner.warmUp() }
         }
     }
 
     private func retryRefine(_ item: HistoryItem) {
-        guard ollamaStatus == .ready else { return }
+        guard refiner.isReady else { return }
         let mode = Mode(rawValue: item.mode) ?? .dictate
-        overlay.show(.refining)
-        ollama.chat(system: systemPrompt(for: mode, transcript: item.raw), user: mode == .ask ? item.raw : Prompts.transcriptUser(item.raw)) { [weak self] result in
+        overlay.show(.refining(refiner.label))
+        refiner.chat(system: systemPrompt(for: mode, transcript: item.raw), user: mode == .ask ? item.raw : Prompts.transcriptUser(item.raw)) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 switch result {
@@ -557,7 +587,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private func setKeepModelLoaded(_ v: Bool) {
         settings.keepModelLoaded = v
-        if v { if ollamaStatus == .ready { ollama.warmUp() } } else { ollama.unload() }
+        if v { if refiner.isReady { refiner.warmUp() } } else if refiner.backend == .ollama { refiner.unloadOllama() }
         overlay.show(.info(v ? "潤稿模型會常駐記憶體" : "潤稿模型閒置 30 分鐘後會卸載"))
         afterSettingsChange()
     }
@@ -624,14 +654,6 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func ollamaStatusText() -> String {
-        switch ollamaStatus {
-        case .notRunning: return "Ollama 沒有在跑"
-        case .modelMissing: return "模型還沒下載完"
-        case .ready: return "就緒"
-        }
-    }
-
     private func item(_ title: String, _ sel: Selector?, rep: String? = nil, checked: Bool = false, enabled: Bool = true) -> NSMenuItem {
         let it = NSMenuItem(title: title, action: sel, keyEquivalent: "")
         it.target = self
@@ -659,7 +681,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         m.addItem(open)
         m.addItem(.separator())
         m.addItem(item("Whisper large-v3：\(whisperStatusText())", nil, enabled: false))
-        m.addItem(item("Qwen（\(settings.ollamaModel)）：\(ollamaStatusText())", nil, enabled: false))
+        m.addItem(item("潤稿 \(refiner.label)：\(refiner.statusText)", nil, enabled: false))
         if VolumeManager.usesImage {
             m.addItem(item("模型磁碟映像：\(VolumeManager.isMounted ? "已掛載" : "未掛載")", nil, enabled: false))
         }
@@ -679,8 +701,15 @@ final class AppController: NSObject, NSApplicationDelegate {
         m.addItem(submenu("辨識語言：\(settings.language.title)", SpeechLanguage.allCases.map {
             item($0.title, #selector(pickLanguage(_:)), rep: $0.rawValue, checked: $0 == settings.language)
         }))
-        m.addItem(item("AI 潤稿（\(settings.ollamaModel)）", #selector(toggleRefine), checked: settings.refine))
-        m.addItem(item("潤稿模型常駐記憶體", #selector(toggleKeepModelLoaded), checked: settings.keepModelLoaded))
+        m.addItem(item("AI 潤稿（\(refiner.label)）", #selector(toggleRefine), checked: settings.refine))
+        let backendItems = [item("自動（偵測到的第一個）", #selector(pickBackend(_:)), rep: "", checked: settings.refineBackend.isEmpty)]
+            + RefineBackend.allCases.map {
+                item($0.title + (refiner.isInstalled($0) ? "" : "（未安裝）"), #selector(pickBackend(_:)), rep: $0.rawValue, checked: settings.refineBackend == $0.rawValue)
+            }
+        m.addItem(submenu("潤稿後端：\(refiner.backend.title)", backendItems))
+        if refiner.backend == .ollama {
+            m.addItem(item("潤稿模型常駐記憶體", #selector(toggleKeepModelLoaded), checked: settings.keepModelLoaded))
+        }
         m.addItem(item("提示音", #selector(toggleSounds), checked: settings.sounds))
         m.addItem(submenu("麥克風保持喚醒：\(settings.micKeepAlive.shortTitle)（\(recorder.isCapturing ? "常駐中" : "休眠中")）", MicKeepAlive.allCases.map {
             item($0.title, #selector(pickMicKeepAlive(_:)), rep: $0.rawValue, checked: $0 == settings.micKeepAlive)
@@ -718,9 +747,12 @@ final class AppController: NSObject, NSApplicationDelegate {
         if let r = s.representedObject as? String, let l = SpeechLanguage(rawValue: r) { settings.language = l }
         afterSettingsChange()
     }
+    @objc private func pickBackend(_ s: NSMenuItem) {
+        if let r = s.representedObject as? String { setBackend(r) }
+    }
     @objc private func toggleRefine() {
         settings.refine.toggle()
-        if settings.refine && ollamaStatus == .ready { ollama.warmUp() }
+        if settings.refine && refiner.isReady { refiner.warmUp() }
         afterSettingsChange()
     }
     @objc private func toggleSounds() { settings.sounds.toggle(); afterSettingsChange() }
@@ -756,8 +788,8 @@ final class AppController: NSObject, NSApplicationDelegate {
         a.informativeText = """
         本機語音聽寫。按一下快捷鍵說話，再按一下，整理好的文字就出現在游標那裡。
         語音辨識：Whisper large-v3（whisper.cpp，Metal）
-        潤稿：\(settings.ollamaModel)（Ollama）
-        錄音與文字都不離開這台電腦。
+        潤稿：\(refiner.label)
+        \(refiner.backend == .ollama ? "錄音與文字都不離開這台電腦。" : "錄音只在本機辨識；潤稿時逐字稿會經由 \(refiner.backend.title) 送到它的雲端模型。")
         """
         a.addButton(withTitle: "好")
         a.runModal()

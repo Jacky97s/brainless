@@ -17,8 +17,14 @@ final class HubModel: ObservableObject {
     @Published var loginEnabled: Bool = false
     @Published var whisperOK = false
     @Published var whisperStatus = "未啟動"
-    @Published var ollamaOK = false
-    @Published var ollamaStatus = "未連線"
+    @Published var refinerOK = false
+    @Published var refinerStatus = "偵測中…"
+    @Published var refinerLabel = ""
+    /// 設定值，空字串是自動
+    @Published var refineBackend = ""
+    @Published var resolvedBackend: RefineBackend = .ollama
+    @Published var installedBackends: Set<RefineBackend> = []
+    @Published var agentModel = ""
     @Published var ollamaModel = "qwen3.5:9b"
     @Published var whisperModelName = "large-v3"
     @Published var volumeMounted = false
@@ -36,7 +42,7 @@ final class HubModel: ObservableObject {
     @Published var usesImage = false
     let downloader = ModelDownloader()
     let puller = OllamaPuller()
-    var setupNeeded: Bool { !(whisperModelPresent && whisperServerPresent && ollamaInstalled && ollamaOK) }
+    var setupNeeded: Bool { !(whisperModelPresent && whisperServerPresent && refinerOK) }
 
     // 由 AppController 設定的動作
     var onSetHotkey: ((HotkeyChoice) -> Void)?
@@ -56,4 +62,6 @@ final class HubModel: ObservableObject {
     var onRetry: ((HistoryItem) -> Void)?
     var onDownloadWhisper: (() -> Void)?
     var onPullModel: (() -> Void)?
+    var onSetBackend: ((String) -> Void)?
+    var onSetAgentModel: ((String) -> Void)?
 }

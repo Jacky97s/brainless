@@ -270,8 +270,8 @@ struct HomePage: View {
                             VStack(alignment: .leading, spacing: 14) {
                                 Text("模型狀態").font(.system(size: 15, weight: .bold))
                                 modelRow(ok: model.whisperOK, title: "whisper.cpp 語音辨識", sub: "\(model.whisperModelName)・\(model.whisperStatus)")
-                                modelRow(ok: model.ollamaOK, title: "Ollama 潤色／翻譯", sub: "\(model.ollamaModel)・\(model.ollamaStatus)")
-                                modelRow(ok: model.ollamaOK, title: "Ollama 問任何事", sub: "\(model.ollamaModel)・\(model.ollamaStatus)")
+                                modelRow(ok: model.refinerOK, title: "潤色／翻譯", sub: "\(model.refinerLabel)・\(model.refinerStatus)")
+                                modelRow(ok: model.refinerOK, title: "問任何事", sub: "\(model.refinerLabel)・\(model.refinerStatus)")
                                 if model.usesImage {
                                     modelRow(ok: model.volumeMounted, title: "模型磁碟映像", sub: model.volumeMounted ? "已掛載" : "未掛載，請插上外接硬碟")
                                 }
@@ -373,7 +373,7 @@ struct HistoryRow: View {
                         copied = true
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
                     }
-                    Button("重新潤稿") { model.onRetry?(item) }.disabled(!model.ollamaOK)
+                    Button("重新潤稿") { model.onRetry?(item) }.disabled(!model.refinerOK)
                     Button(role: .destructive) { history.delete(item.id) } label: { Image(systemName: "trash") }
                 }
                 Text(item.finalText).font(.system(size: 15)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
@@ -516,15 +516,34 @@ struct SettingsPage: View {
                     }
                 }
                 section("行為") {
-                    Toggle("AI 潤稿（\(model.ollamaModel) 去贅字、補標點、轉繁體）", isOn: Binding(get: { model.refine }, set: { model.onSetRefine?($0) }))
+                    Toggle("AI 潤稿（\(model.refinerLabel) 去贅字、補標點、轉繁體）", isOn: Binding(get: { model.refine }, set: { model.onSetRefine?($0) }))
                     Toggle("快速辨識（短句快一倍，但準確度會掉，預設關閉）", isOn: Binding(get: { model.fastWhisper }, set: { model.onSetFastWhisper?($0) }))
-                    Toggle("潤稿模型常駐記憶體（關掉的話閒置 30 分鐘會卸載，下次要多等十幾秒）", isOn: Binding(get: { model.keepModelLoaded }, set: { model.onSetKeepModelLoaded?($0) }))
+                    if model.resolvedBackend == .ollama {
+                        Toggle("潤稿模型常駐記憶體（關掉的話閒置 30 分鐘會卸載，下次要多等十幾秒）", isOn: Binding(get: { model.keepModelLoaded }, set: { model.onSetKeepModelLoaded?($0) }))
+                    }
                     Toggle("提示音", isOn: Binding(get: { model.sounds }, set: { model.onSetSounds?($0) }))
                     Toggle("登入時自動啟動", isOn: Binding(get: { model.loginEnabled }, set: { _ in model.onToggleLogin?() }))
                 }
+                section("潤稿後端") {
+                    FlowLayout(spacing: 8) {
+                        ChoiceChip(text: "自動（偵測到的第一個）", selected: model.refineBackend.isEmpty) { model.onSetBackend?("") }
+                        ForEach(RefineBackend.allCases, id: \.self) { b in
+                            ChoiceChip(text: b.title + (model.installedBackends.contains(b) ? "" : "（未安裝）"), selected: model.refineBackend == b.rawValue) { model.onSetBackend?(b.rawValue) }
+                        }
+                    }
+                    if model.resolvedBackend != .ollama {
+                        HStack(spacing: 8) {
+                            Text("模型").font(.system(size: 13)).foregroundColor(.secondary)
+                            TextField(model.resolvedBackend == .codex ? "留空用 codex 設定檔的預設" : "例如 haiku、sonnet", text: Binding(get: { model.agentModel }, set: { model.onSetAgentModel?($0) }))
+                                .textFieldStyle(.roundedBorder).frame(maxWidth: 240)
+                        }
+                        Text("用本機已登入的 \(model.resolvedBackend.title) CLI 潤稿，額度算在你的帳號上。錄音仍只在本機辨識，但逐字稿會送到它的雲端模型；要完全不離開這台電腦請選 Ollama。")
+                            .font(.system(size: 12)).foregroundColor(.secondary)
+                    }
+                }
                 section("模型") {
                     HStack(spacing: 10) { Circle().fill(model.whisperOK ? Theme.green : Theme.orange).frame(width: 8, height: 8); Text("whisper.cpp \(model.whisperModelName)：\(model.whisperStatus)") }
-                    HStack(spacing: 10) { Circle().fill(model.ollamaOK ? Theme.green : Theme.orange).frame(width: 8, height: 8); Text("Ollama \(model.ollamaModel)：\(model.ollamaStatus)") }
+                    HStack(spacing: 10) { Circle().fill(model.refinerOK ? Theme.green : Theme.orange).frame(width: 8, height: 8); Text("潤稿 \(model.refinerLabel)：\(model.refinerStatus)") }
                     if model.usesImage {
                         HStack(spacing: 10) { Circle().fill(model.volumeMounted ? Theme.green : Theme.orange).frame(width: 8, height: 8); Text("模型磁碟映像：\(model.volumeMounted ? "已掛載" : "未掛載")") }
                     }

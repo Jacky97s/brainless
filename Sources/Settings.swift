@@ -201,6 +201,20 @@ final class Settings {
         get { d.string(forKey: "ollamaModel") ?? "qwen3.5:9b" }
         set { d.set(newValue, forKey: "ollamaModel") }
     }
+    /// 潤稿後端（RefineBackend.rawValue）；空字串代表自動，用偵測到的第一個
+    var refineBackend: String {
+        get { d.string(forKey: "refineBackend") ?? "" }
+        set { d.set(newValue, forKey: "refineBackend") }
+    }
+    var claudeModel: String {
+        get { d.string(forKey: "claudeModel") ?? "haiku" }
+        set { d.set(newValue, forKey: "claudeModel") }
+    }
+    /// 空字串代表用 codex 自己設定檔裡的模型
+    var codexModel: String {
+        get { d.string(forKey: "codexModel") ?? "" }
+        set { d.set(newValue, forKey: "codexModel") }
+    }
     var whisperServerPath: String {
         get { d.string(forKey: "whisperServerPath") ?? "" }
         set { d.set(newValue, forKey: "whisperServerPath") }

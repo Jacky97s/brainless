@@ -12,7 +12,7 @@ struct SetupCard: View {
         Card {
             VStack(alignment: .leading, spacing: 14) {
                 Text("第一次使用：把引擎備齊").font(.system(size: 15, weight: .bold))
-                Text("語音辨識和潤稿都在這台電腦上跑，所以要先把兩個模型放到本機。").font(.system(size: 12)).foregroundColor(.secondary)
+                Text("語音辨識在這台電腦上跑；潤稿用本機的 Claude Code／Codex CLI，或 Ollama 跑的本地模型。").font(.system(size: 12)).foregroundColor(.secondary)
 
                 row(ok: model.whisperServerPresent, title: "whisper.cpp（語音辨識引擎）") {
                     if !model.whisperServerPresent {
@@ -42,6 +42,16 @@ struct SetupCard: View {
                         }
                     }
                 }
+                if model.resolvedBackend != .ollama {
+                    row(ok: model.refinerOK, title: "\(model.resolvedBackend.title) CLI（潤稿）") {
+                        if !model.refinerOK, let spec = AgentCLI.spec(for: model.resolvedBackend) {
+                            HStack(spacing: 8) {
+                                Button("安裝說明") { NSWorkspace.shared.open(spec.installURL) }
+                                Text("裝好並登入一次之後回來這裡，或到下方改選其他後端。").font(.system(size: 12)).foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                } else {
                 row(ok: model.ollamaInstalled, title: "Ollama（跑潤稿模型的工具）") {
                     if !model.ollamaInstalled {
                         HStack(spacing: 8) {
@@ -50,19 +60,21 @@ struct SetupCard: View {
                         }
                     }
                 }
-                row(ok: model.ollamaOK, title: "潤稿模型 \(model.ollamaModel)（約 7 GB）") {
-                    if !model.ollamaOK {
+                row(ok: model.refinerOK, title: "潤稿模型 \(model.ollamaModel)（約 7 GB）") {
+                    if !model.refinerOK {
                         if puller.running {
                             ProgressView(value: puller.progress).frame(maxWidth: 320)
                             Text(puller.status).font(.system(size: 12)).foregroundColor(.secondary)
                         } else {
                             HStack(spacing: 8) {
                                 Button("下載 \(model.ollamaModel)") { model.onPullModel?() }.disabled(!model.ollamaInstalled)
-                                Text(model.ollamaStatus).font(.system(size: 12)).foregroundColor(.secondary)
+                                Text(model.refinerStatus).font(.system(size: 12)).foregroundColor(.secondary)
                                 if let e = puller.error { Text(e).font(.system(size: 11)).foregroundColor(.red) }
                             }
                         }
                     }
+                }
+                Text("也可以改裝 Claude Code 或 Codex CLI，用雲端模型潤稿，不用下載 7 GB。").font(.system(size: 11)).foregroundColor(.secondary)
                 }
             }
         }

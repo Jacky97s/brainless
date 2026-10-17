@@ -28,7 +28,7 @@ final class OverlayPanel: NSPanel {
     enum Display {
         case listening(hotkey: String, mode: String)
         case transcribing
-        case refining
+        case refining(String)
         case done(String)
         case error(String)
         case info(String)
@@ -103,10 +103,10 @@ final class OverlayPanel: NSPanel {
             icon.stringValue = "👂"
             titleLabel.stringValue = "辨識中…"
             subtitleLabel.stringValue = "Whisper large-v3 正在聽"
-        case .refining:
+        case .refining(let who):
             icon.stringValue = "✨"
             titleLabel.stringValue = "潤稿中…"
-            subtitleLabel.stringValue = "\(Settings.shared.ollamaModel) 正在整理"
+            subtitleLabel.stringValue = "\(who) 正在整理"
         case .done(let t):
             icon.stringValue = "✅"
             titleLabel.stringValue = "已貼上"

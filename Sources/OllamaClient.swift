@@ -84,20 +84,9 @@ final class OllamaClient {
             }
             guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let msg = obj["message"] as? [String: Any],
-                  var content = msg["content"] as? String else {
+                  let content = msg["content"] as? String else {
                 completion(.failure(NSError(domain: "Whispry", code: 11, userInfo: [NSLocalizedDescriptionKey: "Ollama 回傳格式看不懂"])))
                 return
-            }
-            // 萬一模型還是吐出思考段落，去掉
-            if let r = content.range(of: "</think>") { content = String(content[r.upperBound...]) }
-            content = content.trimmingCharacters(in: .whitespacesAndNewlines)
-            for (l, r) in [("「", "」"), ("\"", "\""), ("“", "”"), ("『", "』")] {
-                if content.hasPrefix(l) && content.hasSuffix(r) && content.count > 2 {
-                    content = String(content.dropFirst().dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
-                }
-            }
-            for prefix in ["整理後：", "潤稿：", "譯文：", "結果："] {
-                if content.hasPrefix(prefix) { content = String(content.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines) }
             }
             Log.w("ollama ok in \(String(format: "%.1f", Date().timeIntervalSince(t0)))s, \(content.count) chars")
             completion(.success(content))
