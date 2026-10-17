@@ -30,7 +30,7 @@ struct SetupCard: View {
                             Text("沒有 Homebrew 的話先到 brew.sh 安裝。").font(.system(size: 11)).foregroundColor(.secondary)
                         }
                     }
-                    row(ok: model.whisperModelPresent, title: "Whisper large-v3 模型（3.1 GB）") {
+                    row(ok: model.whisperModelPresent, title: "Whisper 模型 \(model.localWhisperModel.title)") {
                         if !model.whisperModelPresent {
                             if downloader.running {
                                 ProgressView(value: downloader.progress).frame(maxWidth: 320)

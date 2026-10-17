@@ -759,6 +759,18 @@ struct SpeechEngineBlock: View {
                 ChoiceChip(text: "本機", selected: model.speechEngine == .local) { model.onSetSpeechEngine?(.local) }
                 ChoiceChip(text: "遠端（OpenAI 相容）", selected: model.speechEngine == .remote) { model.onSetSpeechEngine?(.remote) }
             }
+            if model.speechEngine == .local {
+                FlowLayout(spacing: 8) {
+                    ForEach(LocalWhisperModel.allCases, id: \.self) { m in
+                        ChoiceChip(text: m.title, selected: model.localWhisperModel == m) { model.onSetLocalWhisperModel?(m) }
+                    }
+                }
+                Text("large-v3 最準，但每句要算比較久、佔 3.1 GB。large-v3-turbo 只有 1.6 GB，解碼快很多，準確度略低一點，換模型時會重啟本機引擎。")
+                    .font(Theme.small).foregroundColor(Theme.muted).fixedSize(horizontal: false, vertical: true)
+                if !model.whisperModelPresent {
+                    WhisperDownloadRow(model: model, downloader: model.downloader)
+                }
+            }
             if model.speechEngine == .remote {
                 RowGroup {
                     EndpointRows(url: model.remoteWhisperURL, modelName: model.remoteWhisperModel, hasKey: model.hasRemoteKey,
@@ -775,6 +787,23 @@ struct SpeechEngineBlock: View {
                 if model.remoteSendsKeyInClear && model.hasRemoteKey {
                     Text("這個端點不是 https，API key 會以明文傳送。").font(Theme.small).foregroundColor(Theme.muted)
                 }
+            }
+        }
+    }
+}
+
+/// 選到的本機模型檔不在時的下載列；進度在 downloader 上，要自己觀察才會重繪
+struct WhisperDownloadRow: View {
+    @ObservedObject var model: HubModel
+    @ObservedObject var downloader: ModelDownloader
+    var body: some View {
+        HStack(spacing: 10) {
+            if downloader.running {
+                ProgressView(value: downloader.progress).frame(maxWidth: 240)
+                Text("下載中 \(Int(downloader.progress * 100))%").font(Theme.small).foregroundColor(Theme.muted)
+            } else {
+                TextAction("下載 \(model.localWhisperModel.shortName)") { model.onDownloadWhisper?() }
+                if let e = downloader.error { Text(e).font(Theme.small).foregroundColor(Theme.orange) }
             }
         }
     }

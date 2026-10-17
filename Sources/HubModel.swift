@@ -27,7 +27,7 @@ final class HubModel: ObservableObject {
     @Published var installedBackends: Set<RefineBackend> = []
     @Published var agentModel = ""
     @Published var ollamaModel = "qwen3.5:9b"
-    @Published var whisperModelName = "large-v3"
+    @Published var localWhisperModel: LocalWhisperModel = .largeV3
     @Published var volumeMounted = false
     @Published var appState = "待命中"
     /// AppController.State 的 rawValue，或 "noPermission"
@@ -94,6 +94,7 @@ final class HubModel: ObservableObject {
     var onSetKeepModelLoaded: ((Bool) -> Void)?
     var onSetFastWhisper: ((Bool) -> Void)?
     var onSetSpeechEngine: ((SpeechEngine) -> Void)?
+    var onSetLocalWhisperModel: ((LocalWhisperModel) -> Void)?
     var onSetRemoteWhisper: ((_ url: String, _ model: String) -> Void)?
     var onSetRemoteKey: ((String) -> Void)?
     var onSetRemoteChat: ((_ url: String, _ model: String) -> Void)?

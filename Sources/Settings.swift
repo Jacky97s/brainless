@@ -281,8 +281,13 @@ final class Settings {
         get { d.string(forKey: "modelImagePath") ?? "" }
         set { d.set(newValue, forKey: "modelImagePath") }
     }
+    var localWhisperModel: LocalWhisperModel {
+        get { LocalWhisperModel(rawValue: d.string(forKey: "localWhisperModel") ?? "") ?? .largeV3 }
+        set { d.set(newValue.rawValue, forKey: "localWhisperModel") }
+    }
+    /// 明確設過 whisperModelPath 就用它，否則依選的本機模型落在 modelsDir
     var whisperModelPath: String {
-        get { d.string(forKey: "whisperModelPath") ?? (modelsDir as NSString).appendingPathComponent(ModelSetup.whisperModelFileName) }
+        get { d.string(forKey: "whisperModelPath") ?? localWhisperModel.path(inModelsDir: modelsDir) }
         set { d.set(newValue, forKey: "whisperModelPath") }
     }
     var whisperPort: Int {

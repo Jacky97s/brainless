@@ -144,6 +144,11 @@ final class AppController: NSObject, NSApplicationDelegate {
         hub.onSetKeepModelLoaded = { [weak self] v in self?.setKeepModelLoaded(v) }
         hub.onSetFastWhisper = { [weak self] v in self?.settings.fastWhisper = v; self?.afterSettingsChange() }
         hub.onSetSpeechEngine = { [weak self] e in self?.settings.speechEngine = e; self?.restartTranscriber() }
+        hub.onSetLocalWhisperModel = { [weak self] m in
+            guard let self = self, self.settings.localWhisperModel != m else { return }
+            self.settings.localWhisperModel = m
+            self.restartTranscriber()
+        }
         hub.onSetRemoteWhisper = { [weak self] url, model in
             self?.settings.remoteWhisperURL = url
             self?.settings.remoteWhisperModel = model
@@ -185,7 +190,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         hub.onRetry = { [weak self] item in self?.retryRefine(item) }
         hub.onDownloadWhisper = { [weak self] in
             guard let self = self else { return }
-            self.hub.downloader.start(url: ModelSetup.whisperModelURL, to: URL(fileURLWithPath: self.settings.whisperModelPath))
+            self.hub.downloader.start(url: self.settings.localWhisperModel.downloadURL, to: URL(fileURLWithPath: self.settings.whisperModelPath))
         }
         hub.downloader.onDone = { [weak self] in
             guard let self = self else { return }
@@ -254,7 +259,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         hub.installedBackends = Set(RefineBackend.allCases.filter { refiner.isInstalled($0) })
         hub.agentModel = refiner.backend == .ollama ? "" : refiner.model
         hub.ollamaModel = settings.ollamaModel
-        hub.whisperModelName = URL(fileURLWithPath: settings.whisperModelPath).deletingPathExtension().lastPathComponent.replacingOccurrences(of: "ggml-", with: "")
+        hub.localWhisperModel = settings.localWhisperModel
         hub.volumeMounted = VolumeManager.isMounted
         hub.appState = statusLine()
         hub.phase = hotkeyRunning ? state.rawValue : "noPermission"

@@ -121,7 +121,7 @@ final class Transcriber {
 
     var label: String {
         switch engine {
-        case .local: return "本機 whisper.cpp large-v3"
+        case .local: return "本機 whisper.cpp \(settings.localWhisperModel.shortName)"
         case .remote:
             guard let c = settings.remoteWhisper else { return "遠端（未設定）" }
             return "遠端 \(c.model)（\(c.baseURL.host ?? "?")）"

@@ -2,9 +2,35 @@ import Foundation
 import Combine
 
 /// 找引擎、下載模型：讓別人第一次打開就能把東西備齊
+/// Local Whisper weights the app knows how to fetch and run.
+enum LocalWhisperModel: String, CaseIterable {
+    case largeV3, largeV3Turbo
+
+    var fileName: String {
+        switch self {
+        case .largeV3: return "ggml-large-v3.bin"
+        case .largeV3Turbo: return "ggml-large-v3-turbo.bin"
+        }
+    }
+    var downloadURL: URL {
+        URL(string: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/\(fileName)")!
+    }
+    var title: String {
+        switch self {
+        case .largeV3: return "large-v3（最準，3.1 GB）"
+        case .largeV3Turbo: return "large-v3-turbo（快很多，1.6 GB）"
+        }
+    }
+    var shortName: String {
+        switch self {
+        case .largeV3: return "large-v3"
+        case .largeV3Turbo: return "large-v3-turbo"
+        }
+    }
+    func path(inModelsDir dir: String) -> String { (dir as NSString).appendingPathComponent(fileName) }
+}
+
 enum ModelSetup {
-    static let whisperModelURL = URL(string: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin")!
-    static let whisperModelFileName = "ggml-large-v3.bin"
     static let brewCommand = "brew install whisper-cpp"
     static let ollamaDownloadURL = URL(string: "https://ollama.com/download")!
 
@@ -33,7 +59,7 @@ enum ModelSetup {
     }
 }
 
-/// 下載 Whisper 模型（3.1 GB），有進度
+/// 下載 Whisper 模型（1.6～3.1 GB），有進度
 final class ModelDownloader: NSObject, ObservableObject, URLSessionDownloadDelegate {
     @Published var progress: Double = 0
     @Published var running = false
