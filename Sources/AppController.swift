@@ -44,6 +44,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var pressStartedRecording = false
     private var recordingMode: Mode = .dictate
     private var recordingStartedAt = Date.distantPast
+    private var job: DictationJob?
     private var autoStopTimer: Timer?
     private var lastResult: String?
     private var accessibilityTimer: Timer?
@@ -79,7 +80,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         hotkey.configure(settings.shortcuts)
         hotkey.onPress = { [weak self] mode, sc in self?.handlePress(mode, sc) }
         hotkey.onRelease = { [weak self] held in self?.handleRelease(held) }
-        hotkey.onEscape = { [weak self] in self?.cancelRecording() }
+        hotkey.onEscape = { [weak self] in self?.cancelDictation() }
 
         requestMicrophone()
         ensureAccessibilityAndStartHotkey()
@@ -386,6 +387,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             return
         }
         state = .recording
+        job = DictationJob(mode: recordingMode)
         recordingStartedAt = Date()
         hotkey.escapeArmed = true
         playSound("Tink")
@@ -396,21 +398,31 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func cancelRecording() {
-        guard state == .recording else { return }
+    /// Esc：錄音、辨識、潤稿任一階段都能整個取消；開始貼上就來不及了
+    private func cancelDictation() {
+        guard let job = job, [.recording, .transcribing, .refining].contains(state) else { return }
+        Log.w("job cancelled at \(state.rawValue)")
         autoStopTimer?.invalidate()
-        hotkey.escapeArmed = false
-        if let rec = recorder.endRecording() { try? FileManager.default.removeItem(at: rec.url) }
+        endJob()
+        if state == .recording {
+            if let rec = recorder.endRecording() { try? FileManager.default.removeItem(at: rec.url) }
+        } else {
+            job.cancel()
+        }
         state = .idle
         applyMicKeepAlive()
         playSound("Pop")
         overlay.show(.info("已取消"))
     }
 
-    private func stopAndProcess() {
-        guard state == .recording else { return }
-        autoStopTimer?.invalidate()
+    private func endJob() {
+        job = nil
         hotkey.escapeArmed = false
+    }
+
+    private func stopAndProcess() {
+        guard state == .recording, let job = job else { return }
+        autoStopTimer?.invalidate()
         state = .transcribing
         playSound("Pop")
         overlay.show(.transcribing(transcriber.label))
@@ -429,17 +441,19 @@ final class AppController: NSObject, NSApplicationDelegate {
         let mode = recordingMode
         let seconds = rec.seconds
 
+        job.onCancel { try? FileManager.default.removeItem(at: rec.url) }
         let run: (String?) -> Void = { [weak self] selection in
-            guard let self = self else { return }
+            guard let self = self, self.job === job else { return }
             let ctx = self.settings.fastWhisper ? WhisperServer.audioContext(forSeconds: seconds) : nil
             let finish: (String) -> Void = { raw in
                 try? FileManager.default.removeItem(at: rec.url)
                 let text = TextCleaner.clean(raw)
                 if text.isEmpty { self.fail("沒有辨識出文字"); return }
-                self.afterTranscript(text, mode: mode, selection: selection, seconds: seconds)
+                self.afterTranscript(text, mode: mode, selection: selection, seconds: seconds, job: job)
             }
-            self.transcriber.transcribe(wav: rec.url, language: lang.whisperCode, prompt: prompt.isEmpty ? nil : prompt, audioContext: ctx) { result in
+            job.onCancel(self.transcriber.transcribe(wav: rec.url, language: lang.whisperCode, prompt: prompt.isEmpty ? nil : prompt, audioContext: ctx) { result in
                 DispatchQueue.main.async {
+                    guard self.job === job else { return }
                     switch result {
                     case .failure(let e):
                         try? FileManager.default.removeItem(at: rec.url)
@@ -452,8 +466,9 @@ final class AppController: NSObject, NSApplicationDelegate {
                             self.overlay.show(.transcribing(self.transcriber.label))
                             var p2 = code == "zh" ? Prompts.whisperZhPrompt : (code == "yue" ? Prompts.whisperYuePrompt : "")
                             p2 += self.dict.whisperHint
-                            self.transcriber.transcribe(wav: rec.url, language: code, prompt: p2.isEmpty ? nil : p2, audioContext: ctx) { r2 in
+                            job.onCancel(self.transcriber.transcribe(wav: rec.url, language: code, prompt: p2.isEmpty ? nil : p2, audioContext: ctx) { r2 in
                                 DispatchQueue.main.async {
+                                    guard self.job === job else { return }
                                     switch r2 {
                                     case .failure(let e):
                                         try? FileManager.default.removeItem(at: rec.url)
@@ -462,16 +477,17 @@ final class AppController: NSObject, NSApplicationDelegate {
                                         finish(rr.text)
                                     }
                                 }
-                            }
+                            })
                             return
                         }
                         finish(r.text)
                     }
                 }
-            }
+            })
         }
         if mode == .ask {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                guard self.job === job else { return }
                 TextInserter.readSelection { sel in run(sel) }
             }
         } else {
@@ -489,7 +505,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         return base + dict.llmHint(for: transcript) + (settings.language == .yue ? Prompts.cantoneseHint : "")
     }
 
-    private func afterTranscript(_ text: String, mode: Mode, selection: String?, seconds: Double) {
+    private func afterTranscript(_ text: String, mode: Mode, selection: String?, seconds: Double, job: DictationJob) {
         let needsLLM = settings.refine || mode != .dictate
         guard needsLLM else { insert(text, raw: text, mode: mode, seconds: seconds); return }
         let who = refiner.backend.title
@@ -509,9 +525,9 @@ final class AppController: NSObject, NSApplicationDelegate {
         case .dictate, .translate: user = Prompts.transcriptUser(text)
         case .ask: user = Prompts.askUser(selected: selection, command: text)
         }
-        refiner.chat(system: systemPrompt(for: mode, transcript: text), user: user) { [weak self] result in
+        job.onCancel(refiner.chat(system: systemPrompt(for: mode, transcript: text), user: user) { [weak self] result in
             DispatchQueue.main.async {
-                guard let self = self else { return }
+                guard let self = self, self.job === job else { return }
                 switch result {
                 case .success(var out):
                     for tag in ["【逐字稿】", "逐字稿：", "輸出「", "輸出："] {
@@ -534,7 +550,7 @@ final class AppController: NSObject, NSApplicationDelegate {
                     }
                 }
             }
-        }
+        })
     }
 
     private func insert(_ text: String, raw: String, mode: Mode, seconds: Double) {
@@ -543,8 +559,10 @@ final class AppController: NSObject, NSApplicationDelegate {
         history.add(HistoryItem(date: Date(), seconds: seconds, raw: raw, refined: text == raw ? nil : text, mode: mode.rawValue))
         playSound("Glass")
         overlay.show(.done(text))
+        hotkey.escapeArmed = false
         TextInserter.paste(text) { [weak self] in
             guard let self = self else { return }
+            self.endJob()
             self.state = .idle
             if self.refiner.isReady && self.settings.refine { self.refiner.warmUp() }
         }
@@ -638,6 +656,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private func fail(_ msg: String) {
         Log.w("fail: \(msg)")
+        endJob()
         state = .idle
         applyMicKeepAlive()
         playSound("Basso")
@@ -671,8 +690,8 @@ final class AppController: NSObject, NSApplicationDelegate {
         switch state {
         case .idle: return hotkeyRunning ? "待命中：按 \(settings.primaryShortcutLabel) 開始說話" : "等待「輔助使用」權限…"
         case .recording: return "錄音中…（再按一下結束，Esc 取消）"
-        case .transcribing: return "辨識中…"
-        case .refining: return "潤稿中…"
+        case .transcribing: return "辨識中…（Esc 取消）"
+        case .refining: return "潤稿中…（Esc 取消）"
         case .inserting: return "貼上中…"
         }
     }

@@ -144,10 +144,12 @@ final class Transcriber {
         if let key = settings.remoteKey, !key.isEmpty { req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
     }
 
-    func transcribe(wav: URL, language: String, prompt: String?, audioContext: Int? = nil, completion: @escaping (Swift.Result<Transcript, Error>) -> Void) {
+    /// 回傳的 closure 取消這次請求
+    @discardableResult
+    func transcribe(wav: URL, language: String, prompt: String?, audioContext: Int? = nil, completion: @escaping (Swift.Result<Transcript, Error>) -> Void) -> () -> Void {
         guard let data = try? Data(contentsOf: wav) else {
             completion(.failure(NSError(domain: "Whispry", code: 2, userInfo: [NSLocalizedDescriptionKey: "讀不到錄音檔"])))
-            return
+            return {}
         }
         let boundary = "----Whispry\(UUID().uuidString)"
         var fields: [(String, String)]
@@ -172,7 +174,7 @@ final class Transcriber {
         case .remote:
             guard let cfg = settings.remoteWhisper else {
                 completion(.failure(NSError(domain: "Whispry", code: 4, userInfo: [NSLocalizedDescriptionKey: "還沒設定遠端端點"])))
-                return
+                return {}
             }
             fields = [("model", cfg.model), ("response_format", "verbose_json"), ("temperature", "0")]
             if language != "auto" { fields.append(("language", language)) }
@@ -187,12 +189,14 @@ final class Transcriber {
         req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         req.httpBody = WhisperHTTP.multipart(wav: data, fields: fields, boundary: boundary)
         let t0 = Date()
-        URLSession.shared.dataTask(with: req) { data, resp, err in
+        let task = URLSession.shared.dataTask(with: req) { data, resp, err in
             let result = WhisperHTTP.parse(data: data, response: resp, error: err, source: source)
             if case .success(let t) = result, let lang = t.language {
                 Log.w("\(tag) ok in \(String(format: "%.1f", Date().timeIntervalSince(t0)))s, \(t.text.count) chars, lang=\(lang)")
             }
             completion(result)
-        }.resume()
+        }
+        task.resume()
+        return { task.cancel() }
     }
 }

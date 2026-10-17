@@ -99,8 +99,10 @@ enum AgentCLI {
         return dir
     }
 
+    /// 回傳的 closure 會結束 agent 行程；結束後 completion 仍會以失敗呼叫一次
+    @discardableResult
     static func run(_ spec: AgentSpec, path: String, system: String, user: String, model: String, timeout: TimeInterval = 90,
-                    completion: @escaping (Swift.Result<String, Error>) -> Void) {
+                    completion: @escaping (Swift.Result<String, Error>) -> Void) -> () -> Void {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: path)
         p.arguments = spec.arguments(system, model)
@@ -115,10 +117,27 @@ enum AgentCLI {
         p.standardOutput = outPipe
         p.standardError = errPipe
         let name = spec.backend.title
+        let lock = NSLock()
+        var cancelled = false
+        let cancelledError = NSError(domain: "Whispry", code: 22, userInfo: [NSLocalizedDescriptionKey: "\(name) 已取消"])
+        let kill = {
+            if p.isRunning {
+                // agent 常再開子行程，只殺它自己的話子行程會抓著 pipe 不放
+                let pkill = Process()
+                pkill.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+                pkill.arguments = ["-TERM", "-P", "\(p.processIdentifier)"]
+                try? pkill.run()
+                pkill.waitUntilExit()
+                p.terminate()
+            }
+        }
 
         DispatchQueue.global(qos: .userInitiated).async {
             let t0 = Date()
-            do { try p.run() } catch { completion(.failure(error)); return }
+            lock.lock()
+            if cancelled { lock.unlock(); completion(.failure(cancelledError)); return }
+            do { try p.run() } catch { lock.unlock(); completion(.failure(error)); return }
+            lock.unlock()
             DispatchQueue.global().async {
                 try? inPipe.fileHandleForWriting.write(contentsOf: Data(spec.stdin(system, user).utf8))
                 try? inPipe.fileHandleForWriting.close()
@@ -135,6 +154,12 @@ enum AgentCLI {
             p.waitUntilExit()
             killer.cancel()
 
+            lock.lock(); let wasCancelled = cancelled; lock.unlock()
+            if wasCancelled {
+                Log.w("agent \(spec.binary) cancelled")
+                completion(.failure(cancelledError))
+                return
+            }
             let out = String(data: outData, encoding: .utf8) ?? ""
             let elapsed = String(format: "%.1f", Date().timeIntervalSince(t0))
             if timedOut {
@@ -151,6 +176,12 @@ enum AgentCLI {
             }
             Log.w("agent \(spec.binary) ok in \(elapsed)s, \(out.count) chars")
             completion(.success(out))
+        }
+        return {
+            lock.lock()
+            cancelled = true
+            kill()
+            lock.unlock()
         }
     }
 }

@@ -88,16 +88,17 @@ final class RefineService {
     func warmUp() { if backend == .ollama { ollama.warmUp() } }
     func unloadOllama() { ollama.unload() }
 
-    /// completion 不保證在 main thread
-    func chat(system: String, user: String, completion: @escaping (Swift.Result<String, Error>) -> Void) {
+    /// completion 不保證在 main thread；回傳的 closure 取消這次呼叫
+    @discardableResult
+    func chat(system: String, user: String, completion: @escaping (Swift.Result<String, Error>) -> Void) -> () -> Void {
         let done: (Swift.Result<String, Error>) -> Void = { completion($0.map(Self.tidy)) }
         let b = backend
-        guard b != .ollama else { ollama.chat(system: system, user: user, completion: done); return }
+        guard b != .ollama else { return ollama.chat(system: system, user: user, completion: done) }
         guard let spec = AgentCLI.spec(for: b), let path = agentPaths[b] else {
             completion(.failure(NSError(domain: "Whispry", code: 21, userInfo: [NSLocalizedDescriptionKey: "找不到 \(b.title)"])))
-            return
+            return {}
         }
-        AgentCLI.run(spec, path: path, system: system, user: user, model: model, completion: done)
+        return AgentCLI.run(spec, path: path, system: system, user: user, model: model, completion: done)
     }
 
     /// 去掉模型偶爾多吐的思考段落、外層引號、「整理後：」這類前綴
