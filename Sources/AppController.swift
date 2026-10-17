@@ -319,15 +319,15 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
         hub.learningHotkey = true
         overlay.show(.info("現在按一下你想當快捷鍵的那顆鍵…"))
-        hotkey.captureNext = { [weak self] kc, mask, name in
+        hotkey.captureNext = { [weak self] keys, isModifier, name in
             guard let self = self else { return }
-            if kc == 57 {
+            if keys == [57] {
                 self.hub.learningHotkey = false
                 self.overlay.show(.error("Caps Lock 每按一次會切換大小寫，不適合當快捷鍵，請換一顆再試"))
                 return
             }
-            self.settings.customKeyCode = Int(kc)
-            self.settings.customMask = mask
+            self.settings.customKeyCode = isModifier ? 0 : Int(keys[0])
+            self.settings.customModifierKeys = isModifier ? keys.map(Int.init) : []
             self.settings.customLabel = name
             self.settings.hotkey = .custom
             self.hotkey.configure(.custom)
@@ -335,7 +335,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             self.hub.learningHotkey = false
             self.overlay.show(.info("快捷鍵改成「\(name)」，按一下它開始說話"))
             self.afterSettingsChange()
-            Log.w("custom hotkey learned kc=\(kc) mask=\(String(mask, radix: 16)) name=\(name)")
+            Log.w("custom hotkey learned keys=\(keys) modifier=\(isModifier) name=\(name)")
         }
     }
 
@@ -692,7 +692,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         m.addItem(submenu("翻譯成：\(settings.translateTarget)", Settings.translateTargets.map {
             item($0, #selector(pickTarget(_:)), rep: $0, checked: $0 == settings.translateTarget)
         }))
-        var hotkeyItems = HotkeyChoice.allCases.filter { $0 != .custom || settings.customKeyCode != 0 || settings.customMask != 0 }.map {
+        var hotkeyItems = HotkeyChoice.allCases.filter { $0 != .custom || settings.customKeyCode != 0 || !settings.customModifierKeys.isEmpty }.map {
             item($0.title, #selector(pickHotkey(_:)), rep: $0.rawValue, checked: $0 == settings.hotkey)
         }
         hotkeyItems.append(.separator())

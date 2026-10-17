@@ -5,27 +5,36 @@ import CoreGraphics
 final class HotkeyMonitor {
     var onPress: (() -> Void)?
     var onRelease: ((TimeInterval) -> Void)?
-    /// 設定了就進入「學習模式」：下一個按下的鍵會回傳 (keyCode, flagMask, 名稱)，不觸發錄音
-    var captureNext: ((Int64, UInt64, String) -> Void)?
+    /// 設定了就進入「學習模式」：回傳學到的鍵（修飾鍵組合會等全部放開才回傳）、是不是修飾鍵、名稱，不觸發錄音
+    var captureNext: ((_ keys: [Int64], _ isModifier: Bool, _ name: String) -> Void)? {
+        didSet { learnedModifiers = [] }
+    }
     /// 錄音中設成 true：按 Esc 會取消
     var escapeArmed = false
     var onEscape: (() -> Void)?
 
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
-    private var keyCode: Int64 = 61
-    private var isModifier = true
-    private var flagMask: UInt64 = 0x80000
+    private var keyCode: Int64 = 0
+    private var modifierKeys: Set<Int64> = [61]
+    private var learnedModifiers: [Int64] = []
     private var pressedAt: Date?
-    private var lastFlags: UInt64 = 0
     private var debugCount = 0
+
+    /// 修飾鍵 keyCode → 只屬於那一顆鍵的旗標（分左右的 device bit；Fn 不分左右）
+    static let modifierBits: [Int64: UInt64] = [
+        56: 0x2, 60: 0x4, 59: 0x1, 62: 0x2000, 58: 0x20, 61: 0x40, 55: 0x8, 54: 0x10, 63: 0x800000,
+    ]
+
+    static func modifiersDown(_ flags: UInt64) -> Set<Int64> {
+        Set(modifierBits.filter { flags & $0.value != 0 }.keys)
+    }
 
     func configure(_ choice: HotkeyChoice) {
         keyCode = choice.keyCode
-        isModifier = choice.isModifier
-        flagMask = choice.flagMask
+        modifierKeys = Set(choice.modifierKeys)
         pressedAt = nil
-        Log.w("HotkeyMonitor: configured keyCode=\(keyCode) modifier=\(isModifier) mask=\(String(flagMask, radix: 16))")
+        Log.w("HotkeyMonitor: configured keyCode=\(keyCode) modifiers=\(modifierKeys.sorted())")
     }
 
     @discardableResult
@@ -57,7 +66,7 @@ final class HotkeyMonitor {
         CFRunLoopAddSource(CFRunLoopGetMain(), src, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
         debugCount = 0
-        Log.w("HotkeyMonitor: started keyCode=\(keyCode) modifier=\(isModifier) mask=\(String(flagMask, radix: 16))")
+        Log.w("HotkeyMonitor: started keyCode=\(keyCode) modifiers=\(modifierKeys.sorted())")
         return true
     }
 
@@ -68,7 +77,7 @@ final class HotkeyMonitor {
         tap = nil
     }
 
-    private func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+    func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             if let t = tap { CGEvent.tapEnable(tap: t, enable: true) }
             return Unmanaged.passUnretained(event)
@@ -81,38 +90,41 @@ final class HotkeyMonitor {
             Log.w("modifier event kc=\(kc) flags=\(String(flags, radix: 16))")
         }
 
-        // 學習模式：記下第一個按下的鍵
+        // 學習模式：修飾鍵累積到全部放開才算數（才學得到組合鍵）；一般按鍵按下就算數
         if let cap = captureNext {
             if type == .flagsChanged {
-                let newlyDown = (flags ^ lastFlags) & flags & 0xFFFF0000
-                lastFlags = flags
-                if newlyDown != 0 {
+                guard Self.modifierBits[kc] != nil else {
+                    // Caps Lock 這類不是 device bit 的鍵，交給上層決定要不要收
                     captureNext = nil
-                    let name = HotkeyChoice.name(forKeyCode: kc, mask: newlyDown)
-                    DispatchQueue.main.async { cap(kc, newlyDown, name) }
+                    DispatchQueue.main.async { cap([kc], false, HotkeyChoice.name(forKeyCode: kc)) }
+                    return Unmanaged.passUnretained(event)
+                }
+                let down = Self.modifiersDown(flags)
+                if down.contains(kc) && !learnedModifiers.contains(kc) { learnedModifiers.append(kc) }
+                if down.isEmpty && !learnedModifiers.isEmpty {
+                    let keys = learnedModifiers
+                    captureNext = nil
+                    DispatchQueue.main.async { cap(keys, true, HotkeyChoice.name(forKeys: keys)) }
                 }
                 return Unmanaged.passUnretained(event)
             } else if type == .keyDown {
                 captureNext = nil
-                let name = HotkeyChoice.name(forKeyCode: kc, mask: 0)
-                DispatchQueue.main.async { cap(kc, 0, name) }
+                DispatchQueue.main.async { cap([kc], false, HotkeyChoice.name(forKeyCode: kc)) }
                 return nil
             }
             return Unmanaged.passUnretained(event)
         }
-        if type == .flagsChanged { lastFlags = flags }
 
         if escapeArmed && kc == 53 && (type == .keyDown || type == .keyUp) {
             if type == .keyDown { DispatchQueue.main.async { self.onEscape?() } }
             return nil
         }
 
-        guard kc == keyCode else { return Unmanaged.passUnretained(event) }
-
-        if isModifier {
+        if !modifierKeys.isEmpty {
             guard type == .flagsChanged else { return Unmanaged.passUnretained(event) }
-            let down = (flags & flagMask) != 0
-            if down {
+            // 組合裡每一顆都按住才算按下，任何一顆放開就算放開
+            let active = modifierKeys.isSubset(of: Self.modifiersDown(flags))
+            if active {
                 if pressedAt == nil {
                     pressedAt = Date()
                     DispatchQueue.main.async { self.onPress?() }
@@ -122,9 +134,10 @@ final class HotkeyMonitor {
                 let held = Date().timeIntervalSince(p)
                 DispatchQueue.main.async { self.onRelease?(held) }
             }
-            if keyCode == 63 { return nil }
+            if modifierKeys == [63] { return nil }
             return Unmanaged.passUnretained(event)
         } else {
+            guard kc == keyCode else { return Unmanaged.passUnretained(event) }
             if type == .keyDown {
                 if pressedAt == nil {
                     pressedAt = Date()

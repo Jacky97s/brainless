@@ -36,26 +36,24 @@ enum HotkeyChoice: String, CaseIterable {
         case .custom: return Int64(Settings.shared.customKeyCode)
         }
     }
-    var isModifier: Bool {
+    /// 要一起按住的修飾鍵；空的代表是一般按鍵（看 keyCode）
+    var modifierKeys: [Int64] {
         switch self {
-        case .rightOption, .rightCommand, .rightControl, .fn: return true
-        case .f18, .f19: return false
-        case .custom: return Settings.shared.customMask != 0
+        case .rightOption: return [61]
+        case .rightCommand: return [54]
+        case .rightControl: return [62]
+        case .fn: return [63]
+        case .f18, .f19: return []
+        case .custom: return Settings.shared.customModifierKeys.map(Int64.init)
         }
     }
-    /// 修飾鍵對應的旗標；一般按鍵是 0
-    var flagMask: UInt64 {
-        switch self {
-        case .rightOption: return 0x80000
-        case .rightCommand: return 0x100000
-        case .rightControl: return 0x40000
-        case .fn: return 0x800000
-        case .f18, .f19: return 0
-        case .custom: return Settings.shared.customMask
-        }
+    var isModifier: Bool { !modifierKeys.isEmpty }
+
+    static func name(forKeys keys: [Int64]) -> String {
+        keys.map { name(forKeyCode: $0) }.joined(separator: "＋")
     }
 
-    static func name(forKeyCode kc: Int64, mask: UInt64) -> String {
+    static func name(forKeyCode kc: Int64) -> String {
         let names: [Int64: String] = [
             58: "左 Option", 61: "右 Option", 55: "左 Command", 54: "右 Command",
             59: "左 Control", 62: "右 Control", 56: "左 Shift", 60: "右 Shift",
@@ -136,9 +134,14 @@ final class Settings {
         get { d.integer(forKey: "customKeyCode") }
         set { d.set(newValue, forKey: "customKeyCode") }
     }
-    var customMask: UInt64 {
-        get { UInt64(d.integer(forKey: "customMask")) }
-        set { d.set(Int(newValue), forKey: "customMask") }
+    /// 自訂的修飾鍵組合（keyCode，例如左 Shift＋左 Option 是 [56, 58]）
+    var customModifierKeys: [Int] {
+        get {
+            if let keys = d.array(forKey: "customModifierKeys") as? [Int] { return keys }
+            // 舊版只存單一修飾鍵：customMask 不為 0 時 customKeyCode 就是那顆修飾鍵
+            return d.integer(forKey: "customMask") != 0 ? [customKeyCode] : []
+        }
+        set { d.set(newValue, forKey: "customModifierKeys") }
     }
     var customLabel: String {
         get { d.string(forKey: "customLabel") ?? "尚未設定" }
