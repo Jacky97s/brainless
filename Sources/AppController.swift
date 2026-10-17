@@ -42,6 +42,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private let hubWindow = HubWindowController()
     private var statusItem: NSStatusItem!
     private var pressStartedRecording = false
+    private var recordingMode: Mode = .dictate
     private var recordingStartedAt = Date.distantPast
     private var autoStopTimer: Timer?
     private var lastResult: String?
@@ -52,7 +53,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     // MARK: - lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        Log.w("\(AppInfo.name) launched, hotkey=\(settings.hotkey.rawValue) mode=\(settings.mode.rawValue)")
+        Log.w("\(AppInfo.name) launched")
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         updateStatusIcon()
         rebuildMenu()
@@ -75,8 +76,8 @@ final class AppController: NSObject, NSApplicationDelegate {
 
         recorder.onLevel = { [weak self] l in self?.overlay.level(l) }
         recorder.onCaptureStateChange = { [weak self] in self?.rebuildMenu(); self?.syncHub() }
-        hotkey.configure(settings.hotkey)
-        hotkey.onPress = { [weak self] in self?.handlePress() }
+        hotkey.configure(settings.shortcuts)
+        hotkey.onPress = { [weak self] mode, sc in self?.handlePress(mode, sc) }
         hotkey.onRelease = { [weak self] held in self?.handleRelease(held) }
         hotkey.onEscape = { [weak self] in self?.cancelRecording() }
 
@@ -125,9 +126,8 @@ final class AppController: NSObject, NSApplicationDelegate {
     // MARK: - hub window
 
     private func wireHub() {
-        hub.onSetHotkey = { [weak self] h in self?.setHotkey(h) }
-        hub.onLearnHotkey = { [weak self] in self?.learnHotkey() }
-        hub.onSetMode = { [weak self] m in self?.settings.mode = m; self?.afterSettingsChange() }
+        hub.onAddShortcut = { [weak self] m in self?.learnShortcut(for: m) }
+        hub.onRemoveShortcut = { [weak self] m, sc in self?.removeShortcut(sc, from: m) }
         hub.onSetTarget = { [weak self] t in self?.settings.translateTarget = t; self?.afterSettingsChange() }
         hub.onSetLanguage = { [weak self] l in self?.settings.language = l; self?.afterSettingsChange() }
         hub.onSetRefine = { [weak self] v in
@@ -186,8 +186,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private func afterSettingsChange() { rebuildMenu(); syncHub() }
 
     private func syncHub() {
-        hub.hotkey = settings.hotkey
-        hub.mode = settings.mode
+        hub.shortcuts = settings.shortcuts
         hub.translateTarget = settings.translateTarget
         hub.language = settings.language
         hub.refine = settings.refine
@@ -241,7 +240,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         if AXIsProcessTrustedWithOptions(opts) && hotkey.start() {
             hotkeyRunning = true
             rebuildMenu()
-            overlay.show(.info("\(AppInfo.name) 準備好了，按 \(settings.hotkey.shortLabel) 開始說話"))
+            overlay.show(.info("\(AppInfo.name) 準備好了，按 \(settings.primaryShortcutLabel) 開始說話"))
             return
         }
         hotkeyRunning = false
@@ -253,7 +252,7 @@ final class AppController: NSObject, NSApplicationDelegate {
                 self.hotkeyRunning = true
                 t.invalidate()
                 self.rebuildMenu()
-                self.overlay.show(.info("\(AppInfo.name) 準備好了，按 \(self.settings.hotkey.shortLabel) 開始說話"))
+                self.overlay.show(.info("\(AppInfo.name) 準備好了，按 \(self.settings.primaryShortcutLabel) 開始說話"))
             }
         }
     }
@@ -283,11 +282,12 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     // MARK: - hotkey
 
-    private func handlePress() {
+    private func handlePress(_ mode: Mode, _ sc: Shortcut) {
         switch state {
         case .idle:
             pressStartedRecording = true
-            startRecording()
+            recordingMode = mode
+            startRecording(shortcut: sc)
         case .recording:
             if Date().timeIntervalSince(recordingStartedAt) < 0.4 { return }
             pressStartedRecording = false
@@ -304,44 +304,52 @@ final class AppController: NSObject, NSApplicationDelegate {
         pressStartedRecording = false
     }
 
-    private func setHotkey(_ h: HotkeyChoice) {
-        settings.hotkey = h
-        hotkey.configure(h)
-        if hotkeyRunning { hotkey.start() }
-        overlay.show(.info("快捷鍵改成 \(h.shortLabel)"))
+    private func applyShortcuts(_ sc: [Mode: [Shortcut]]) {
+        settings.shortcuts = sc
+        hotkey.configure(sc)
         afterSettingsChange()
     }
 
-    private func learnHotkey() {
+    private func removeShortcut(_ sc: Shortcut, from mode: Mode) {
+        var all = settings.shortcuts
+        all[mode]?.removeAll { $0.sameKeys(as: sc) }
+        applyShortcuts(all)
+    }
+
+    private func learnShortcut(for mode: Mode) {
         guard hotkeyRunning else {
             overlay.show(.error("還沒有輔助使用權限，先到系統設定打開 \(AppInfo.name)"))
             return
         }
-        hub.learningHotkey = true
-        overlay.show(.info("現在按一下你想當快捷鍵的那顆鍵…"))
-        hotkey.captureNext = { [weak self] keys, isModifier, name in
+        hub.learningMode = mode
+        overlay.show(.info("按下要給「\(mode.shortTitle)」用的鍵或組合，Esc 取消"))
+        hotkey.captureNext = { [weak self] sc in
             guard let self = self else { return }
-            if keys == [57] {
-                self.hub.learningHotkey = false
-                self.overlay.show(.error("Caps Lock 每按一次會切換大小寫，不適合當快捷鍵，請換一顆再試"))
+            self.hub.learningMode = nil
+            guard let sc = sc else { self.overlay.show(.info("已取消")); return }
+            if sc.key == 57 {
+                self.overlay.show(.error("Caps Lock 每按一次會切換大小寫，不適合當快捷鍵，請換一組再試"))
                 return
             }
-            self.settings.customKeyCode = isModifier ? 0 : Int(keys[0])
-            self.settings.customModifierKeys = isModifier ? keys.map(Int.init) : []
-            self.settings.customLabel = name
-            self.settings.hotkey = .custom
-            self.hotkey.configure(.custom)
-            self.hotkey.start()
-            self.hub.learningHotkey = false
-            self.overlay.show(.info("快捷鍵改成「\(name)」，按一下它開始說話"))
-            self.afterSettingsChange()
-            Log.w("custom hotkey learned keys=\(keys) modifier=\(isModifier) name=\(name)")
+            if sc.key == 53 {
+                self.overlay.show(.error("Esc 是用來取消錄音的，請換一組再試"))
+                return
+            }
+            var all = self.settings.shortcuts
+            if let owner = Mode.allCases.first(where: { m in all[m]?.contains { $0.sameKeys(as: sc) } ?? false }) {
+                self.overlay.show(.error("「\(sc.label)」已經是「\(owner.shortTitle)」的快捷鍵"))
+                return
+            }
+            all[mode, default: []].append(sc)
+            self.applyShortcuts(all)
+            self.overlay.show(.info("「\(mode.shortTitle)」加上「\(sc.label)」"))
+            Log.w("shortcut learned for \(mode.rawValue): mods=\(sc.modifiers) key=\(sc.key.map(String.init) ?? "-")")
         }
     }
 
     // MARK: - pipeline
 
-    private func startRecording() {
+    private func startRecording(shortcut: Shortcut) {
         guard whisper.isReady else {
             overlay.show(.error("Whisper 還沒準備好：\(whisperStatusText())"))
             return
@@ -357,7 +365,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         recordingStartedAt = Date()
         hotkey.escapeArmed = true
         playSound("Tink")
-        overlay.show(.listening(hotkey: settings.hotkey.shortLabel, mode: settings.mode.shortTitle))
+        overlay.show(.listening(hotkey: shortcut.label, mode: recordingMode.shortTitle))
         autoStopTimer?.invalidate()
         autoStopTimer = Timer.scheduledTimer(withTimeInterval: settings.maxSeconds, repeats: false) { [weak self] _ in
             self?.stopAndProcess()
@@ -394,7 +402,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         let lang = settings.language
         var prompt = (lang == .zh || lang == .auto) ? Prompts.whisperZhPrompt : (lang == .yue ? Prompts.whisperYuePrompt : "")
         prompt += dict.whisperHint
-        let mode = settings.mode
+        let mode = recordingMode
         let seconds = rec.seconds
 
         let run: (String?) -> Void = { [weak self] selection in
@@ -637,7 +645,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private func statusLine() -> String {
         switch state {
-        case .idle: return hotkeyRunning ? "待命中：按 \(settings.hotkey.shortLabel) 開始說話" : "等待「輔助使用」權限…"
+        case .idle: return hotkeyRunning ? "待命中：按 \(settings.primaryShortcutLabel) 開始說話" : "等待「輔助使用」權限…"
         case .recording: return "錄音中…（再按一下結束，Esc 取消）"
         case .transcribing: return "辨識中…"
         case .refining: return "潤稿中…"
@@ -686,18 +694,16 @@ final class AppController: NSObject, NSApplicationDelegate {
             m.addItem(item("模型磁碟映像：\(VolumeManager.isMounted ? "已掛載" : "未掛載")", nil, enabled: false))
         }
         m.addItem(.separator())
-        m.addItem(submenu("模式：\(settings.mode.shortTitle)", Mode.allCases.map {
-            item($0.title, #selector(pickMode(_:)), rep: $0.rawValue, checked: $0 == settings.mode)
-        }))
         m.addItem(submenu("翻譯成：\(settings.translateTarget)", Settings.translateTargets.map {
             item($0, #selector(pickTarget(_:)), rep: $0, checked: $0 == settings.translateTarget)
         }))
-        var hotkeyItems = HotkeyChoice.allCases.filter { $0 != .custom || settings.customKeyCode != 0 || !settings.customModifierKeys.isEmpty }.map {
-            item($0.title, #selector(pickHotkey(_:)), rep: $0.rawValue, checked: $0 == settings.hotkey)
+        let sc = settings.shortcuts
+        var shortcutItems = Mode.allCases.map { m in
+            item("\(m.shortTitle)：\((sc[m] ?? []).map(\.label).joined(separator: "、").nilIfEmpty ?? "未設定")", nil, enabled: false)
         }
-        hotkeyItems.append(.separator())
-        hotkeyItems.append(item("自訂快捷鍵：按下你想用的那顆鍵…", #selector(learnHotkeyMenu)))
-        m.addItem(submenu("快捷鍵：\(settings.hotkey.shortLabel)", hotkeyItems))
+        shortcutItems.append(.separator())
+        shortcutItems.append(item("在主視窗設定快捷鍵…", #selector(openShortcutSettings)))
+        m.addItem(submenu("快捷鍵", shortcutItems))
         m.addItem(submenu("辨識語言：\(settings.language.title)", SpeechLanguage.allCases.map {
             item($0.title, #selector(pickLanguage(_:)), rep: $0.rawValue, checked: $0 == settings.language)
         }))
@@ -731,18 +737,14 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     // MARK: - menu actions
 
-    @objc private func pickMode(_ s: NSMenuItem) {
-        if let r = s.representedObject as? String, let m = Mode(rawValue: r) { settings.mode = m }
-        afterSettingsChange()
+    @objc private func openShortcutSettings() {
+        hub.page = .settings
+        openHub()
     }
     @objc private func pickTarget(_ s: NSMenuItem) {
         if let r = s.representedObject as? String { settings.translateTarget = r }
         afterSettingsChange()
     }
-    @objc private func pickHotkey(_ s: NSMenuItem) {
-        if let r = s.representedObject as? String, let h = HotkeyChoice(rawValue: r) { setHotkey(h) }
-    }
-    @objc private func learnHotkeyMenu() { learnHotkey() }
     @objc private func pickLanguage(_ s: NSMenuItem) {
         if let r = s.representedObject as? String, let l = SpeechLanguage(rawValue: r) { settings.language = l }
         afterSettingsChange()
@@ -795,4 +797,8 @@ final class AppController: NSObject, NSApplicationDelegate {
         a.runModal()
     }
     @objc private func quit() { NSApp.terminate(nil) }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }

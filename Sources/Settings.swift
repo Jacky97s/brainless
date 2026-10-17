@@ -1,42 +1,17 @@
 import Foundation
 
-enum HotkeyChoice: String, CaseIterable {
+/// 舊版的單一快捷鍵設定，只用來換算成 Settings.shortcuts
+enum HotkeyChoice: String {
     case rightOption, rightCommand, rightControl, fn, f18, f19, custom
 
-    var title: String {
-        switch self {
-        case .rightOption: return "右 Option（⌥，Windows 鍵盤是右邊的 Alt 鍵）"
-        case .rightCommand: return "右 Command（⌘，Windows 鍵盤是右邊的 Win 鍵）"
-        case .rightControl: return "右 Control（Ctrl）"
-        case .fn: return "Fn／🌐 鍵"
-        case .f18: return "F18"
-        case .f19: return "F19"
-        case .custom: return "自訂：\(Settings.shared.customLabel)"
-        }
-    }
-    var shortLabel: String {
-        switch self {
-        case .rightOption: return "右 ⌥"
-        case .rightCommand: return "右 ⌘"
-        case .rightControl: return "右 Ctrl"
-        case .fn: return "Fn"
-        case .f18: return "F18"
-        case .f19: return "F19"
-        case .custom: return Settings.shared.customLabel
-        }
-    }
     var keyCode: Int64 {
         switch self {
-        case .rightOption: return 61
-        case .rightCommand: return 54
-        case .rightControl: return 62
-        case .fn: return 63
         case .f18: return 79
         case .f19: return 80
         case .custom: return Int64(Settings.shared.customKeyCode)
+        default: return 0
         }
     }
-    /// 要一起按住的修飾鍵；空的代表是一般按鍵（看 keyCode）
     var modifierKeys: [Int64] {
         switch self {
         case .rightOption: return [61]
@@ -46,25 +21,6 @@ enum HotkeyChoice: String, CaseIterable {
         case .f18, .f19: return []
         case .custom: return Settings.shared.customModifierKeys.map(Int64.init)
         }
-    }
-    var isModifier: Bool { !modifierKeys.isEmpty }
-
-    static func name(forKeys keys: [Int64]) -> String {
-        keys.map { name(forKeyCode: $0) }.joined(separator: "＋")
-    }
-
-    static func name(forKeyCode kc: Int64) -> String {
-        let names: [Int64: String] = [
-            58: "左 Option", 61: "右 Option", 55: "左 Command", 54: "右 Command",
-            59: "左 Control", 62: "右 Control", 56: "左 Shift", 60: "右 Shift",
-            63: "Fn", 57: "Caps Lock", 110: "應用程式鍵", 53: "Esc", 48: "Tab", 49: "空白鍵",
-            122: "F1", 120: "F2", 99: "F3", 118: "F4", 96: "F5", 97: "F6", 98: "F7", 100: "F8",
-            101: "F9", 109: "F10", 103: "F11", 111: "F12", 105: "F13", 107: "F14", 113: "F15",
-            106: "F16", 64: "F17", 79: "F18", 80: "F19", 90: "F20", 114: "Insert／Help",
-            115: "Home", 119: "End", 116: "Page Up", 121: "Page Down", 117: "Delete",
-        ]
-        if let n = names[kc] { return n }
-        return "鍵 \(kc)"
     }
 }
 
@@ -126,26 +82,11 @@ final class Settings {
         d.object(forKey: key) == nil ? def : d.bool(forKey: key)
     }
 
-    var hotkey: HotkeyChoice {
-        get { HotkeyChoice(rawValue: d.string(forKey: "hotkey") ?? "") ?? .rightOption }
-        set { d.set(newValue.rawValue, forKey: "hotkey") }
-    }
-    var customKeyCode: Int {
-        get { d.integer(forKey: "customKeyCode") }
-        set { d.set(newValue, forKey: "customKeyCode") }
-    }
-    /// 自訂的修飾鍵組合（keyCode，例如左 Shift＋左 Option 是 [56, 58]）
+    var customKeyCode: Int { d.integer(forKey: "customKeyCode") }
+    /// 舊版自訂修飾鍵；更舊的版本只存單一修飾鍵：customMask 不為 0 時 customKeyCode 就是那顆修飾鍵
     var customModifierKeys: [Int] {
-        get {
-            if let keys = d.array(forKey: "customModifierKeys") as? [Int] { return keys }
-            // 舊版只存單一修飾鍵：customMask 不為 0 時 customKeyCode 就是那顆修飾鍵
-            return d.integer(forKey: "customMask") != 0 ? [customKeyCode] : []
-        }
-        set { d.set(newValue, forKey: "customModifierKeys") }
-    }
-    var customLabel: String {
-        get { d.string(forKey: "customLabel") ?? "尚未設定" }
-        set { d.set(newValue, forKey: "customLabel") }
+        if let keys = d.array(forKey: "customModifierKeys") as? [Int] { return keys }
+        return d.integer(forKey: "customMask") != 0 ? [customKeyCode] : []
     }
     /// 潤稿模型常駐記憶體（不常駐的話閒置 30 分鐘會被卸載，下次要等十幾秒重新載入）
     var keepModelLoaded: Bool {
@@ -173,10 +114,6 @@ final class Settings {
     var micKeepAlive: MicKeepAlive {
         get { MicKeepAlive(rawValue: d.string(forKey: "micKeepAlive") ?? "") ?? .always }
         set { d.set(newValue.rawValue, forKey: "micKeepAlive") }
-    }
-    var mode: Mode {
-        get { Mode(rawValue: d.string(forKey: "mode") ?? "") ?? .dictate }
-        set { d.set(newValue.rawValue, forKey: "mode") }
     }
     var language: SpeechLanguage {
         get { SpeechLanguage(rawValue: d.string(forKey: "language") ?? "") ?? .auto }

@@ -34,7 +34,7 @@ final class OverlayPanel: NSPanel {
         case info(String)
     }
 
-    private let icon = NSTextField(labelWithString: "")
+    private let icon = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let subtitleLabel = NSTextField(labelWithString: "")
     private let meter = LevelMeterView()
@@ -58,13 +58,12 @@ final class OverlayPanel: NSPanel {
         effect.layer?.backgroundColor = NSColor(calibratedWhite: 0.08, alpha: 0.94).cgColor
         effect.layer?.cornerRadius = 16
         effect.layer?.masksToBounds = true
-        effect.layer?.borderWidth = 1
-        effect.layer?.borderColor = NSColor(calibratedWhite: 1, alpha: 0.12).cgColor
         effect.autoresizingMask = [.width, .height]
         contentView = effect
 
-        icon.font = NSFont.systemFont(ofSize: 24)
-        icon.frame = NSRect(x: 16, y: 18, width: 34, height: 32)
+        icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 20, weight: .medium)
+        icon.contentTintColor = .white
+        icon.frame = NSRect(x: 16, y: 18, width: 30, height: 32)
         titleLabel.font = NSFont.systemFont(ofSize: 14, weight: .semibold)
         titleLabel.textColor = .white
         titleLabel.frame = NSRect(x: 56, y: 36, width: 300, height: 20)
@@ -75,6 +74,10 @@ final class OverlayPanel: NSPanel {
         subtitleLabel.lineBreakMode = .byTruncatingTail
         meter.frame = NSRect(x: 262, y: 22, width: 100, height: 24)
         [icon, titleLabel, subtitleLabel, meter].forEach { effect.addSubview($0) }
+    }
+
+    private func setIcon(_ name: String) {
+        icon.image = NSImage(systemSymbolName: name, accessibilityDescription: nil)
     }
 
     override var canBecomeKey: Bool { false }
@@ -93,32 +96,32 @@ final class OverlayPanel: NSPanel {
         var autoHide: TimeInterval? = nil
         switch d {
         case .listening(let hk, let mode):
-            icon.stringValue = "🎙️"
+            setIcon("mic.fill")
             titleLabel.stringValue = "聆聽中（\(mode)）"
             subtitleLabel.stringValue = "再按一下 \(hk) 結束，Esc 取消"
             subtitleLabel.frame.size.width = 200
             meter.isHidden = false
             meter.reset()
         case .transcribing:
-            icon.stringValue = "👂"
+            setIcon("waveform")
             titleLabel.stringValue = "辨識中…"
             subtitleLabel.stringValue = "Whisper large-v3 正在聽"
         case .refining(let who):
-            icon.stringValue = "✨"
+            setIcon("pencil.line")
             titleLabel.stringValue = "潤稿中…"
             subtitleLabel.stringValue = "\(who) 正在整理"
         case .done(let t):
-            icon.stringValue = "✅"
+            setIcon("checkmark")
             titleLabel.stringValue = "已貼上"
             subtitleLabel.stringValue = t.replacingOccurrences(of: "\n", with: " ")
             autoHide = 3
         case .error(let m):
-            icon.stringValue = "⚠️"
+            setIcon("exclamationmark.triangle")
             titleLabel.stringValue = "出了點問題"
             subtitleLabel.stringValue = m.replacingOccurrences(of: "\n", with: " ")
             autoHide = 6
         case .info(let m):
-            icon.stringValue = "💬"
+            setIcon("info.circle")
             titleLabel.stringValue = m
             subtitleLabel.stringValue = ""
             autoHide = 3

@@ -8,8 +8,7 @@ final class HubModel: ObservableObject {
         var icon: String { switch self { case .home: return "house"; case .history: return "clock"; case .dictionary: return "book"; case .settings: return "gearshape" } }
     }
     @Published var page: Page = .home
-    @Published var hotkey: HotkeyChoice = .rightOption
-    @Published var mode: Mode = .dictate
+    @Published var shortcuts: [Mode: [Shortcut]] = [:]
     @Published var translateTarget: String = "英文"
     @Published var language: SpeechLanguage = .auto
     @Published var refine: Bool = true
@@ -29,7 +28,8 @@ final class HubModel: ObservableObject {
     @Published var whisperModelName = "large-v3"
     @Published var volumeMounted = false
     @Published var appState = "待命中"
-    @Published var learningHotkey = false
+    /// 正在幫哪個模式學新的快捷鍵
+    @Published var learningMode: Mode?
     @Published var micKeepAlive: MicKeepAlive = .always
     @Published var keepModelLoaded = true
     @Published var fastWhisper = false
@@ -42,12 +42,16 @@ final class HubModel: ObservableObject {
     @Published var usesImage = false
     let downloader = ModelDownloader()
     let puller = OllamaPuller()
+    var privacyLine: String {
+        resolvedBackend == .ollama
+            ? "辨識與潤稿都在這台電腦上，不上傳任何資料。"
+            : "辨識在這台電腦上；潤稿時逐字稿會經由 \(resolvedBackend.title) 送到雲端模型。"
+    }
     var setupNeeded: Bool { !(whisperModelPresent && whisperServerPresent && refinerOK) }
 
     // 由 AppController 設定的動作
-    var onSetHotkey: ((HotkeyChoice) -> Void)?
-    var onLearnHotkey: (() -> Void)?
-    var onSetMode: ((Mode) -> Void)?
+    var onAddShortcut: ((Mode) -> Void)?
+    var onRemoveShortcut: ((Mode, Shortcut) -> Void)?
     var onSetTarget: ((String) -> Void)?
     var onSetLanguage: ((SpeechLanguage) -> Void)?
     var onSetRefine: ((Bool) -> Void)?

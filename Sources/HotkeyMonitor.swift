@@ -1,13 +1,13 @@
 import Foundation
 import CoreGraphics
 
-/// 全域快捷鍵監聽：用 CGEventTap 抓單一按鍵（修飾鍵或一般鍵）的按下與放開。
+/// 全域快捷鍵監聽：用 CGEventTap 抓每個模式各自的快捷鍵（修飾鍵組合，或修飾鍵＋一般鍵）的按下與放開。
 final class HotkeyMonitor {
-    var onPress: (() -> Void)?
+    var onPress: ((Mode, Shortcut) -> Void)?
     var onRelease: ((TimeInterval) -> Void)?
-    /// 設定了就進入「學習模式」：回傳學到的鍵（修飾鍵組合會等全部放開才回傳）、是不是修飾鍵、名稱，不觸發錄音
-    var captureNext: ((_ keys: [Int64], _ isModifier: Bool, _ name: String) -> Void)? {
-        didSet { learnedModifiers = [] }
+    /// 設定了就進入「學習模式」，學到一組鍵就回傳，按 Esc 回傳 nil；學習中不觸發錄音
+    var captureNext: ((Shortcut?) -> Void)? {
+        didSet { learnOrder = []; learnPeak = [] }
     }
     /// 錄音中設成 true：按 Esc 會取消
     var escapeArmed = false
@@ -15,11 +15,15 @@ final class HotkeyMonitor {
 
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
-    private var keyCode: Int64 = 0
-    private var modifierKeys: Set<Int64> = [61]
-    private var learnedModifiers: [Int64] = []
-    private var pressedAt: Date?
+    private var bindings: [(shortcut: Shortcut, mode: Mode)] = []
+    private var active: (shortcut: Shortcut, since: Date)?
+    private var pending: DispatchWorkItem?
+    private var learnOrder: [Int64] = []
+    private var learnPeak: Set<Int64> = []
     private var debugCount = 0
+
+    /// 修飾鍵剛按齊、但還有別組是它再多按幾顆（或再加一般鍵）的組合時，先等這麼久再決定是哪一組
+    static let chordGrace: TimeInterval = 0.2
 
     /// 修飾鍵 keyCode → 只屬於那一顆鍵的旗標（分左右的 device bit；Fn 不分左右）
     static let modifierBits: [Int64: UInt64] = [
@@ -30,11 +34,11 @@ final class HotkeyMonitor {
         Set(modifierBits.filter { flags & $0.value != 0 }.keys)
     }
 
-    func configure(_ choice: HotkeyChoice) {
-        keyCode = choice.keyCode
-        modifierKeys = Set(choice.modifierKeys)
-        pressedAt = nil
-        Log.w("HotkeyMonitor: configured keyCode=\(keyCode) modifiers=\(modifierKeys.sorted())")
+    func configure(_ shortcuts: [Mode: [Shortcut]]) {
+        bindings = Mode.allCases.flatMap { m in (shortcuts[m] ?? []).map { (shortcut: $0, mode: m) } }
+        active = nil
+        pending?.cancel(); pending = nil
+        Log.w("HotkeyMonitor: configured \(bindings.map { "\($0.mode.rawValue)=\($0.shortcut.modifiers)+\($0.shortcut.key.map(String.init) ?? "-")" })")
     }
 
     @discardableResult
@@ -66,7 +70,7 @@ final class HotkeyMonitor {
         CFRunLoopAddSource(CFRunLoopGetMain(), src, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
         debugCount = 0
-        Log.w("HotkeyMonitor: started keyCode=\(keyCode) modifiers=\(modifierKeys.sorted())")
+        Log.w("HotkeyMonitor: started with \(bindings.count) shortcuts")
         return true
     }
 
@@ -82,77 +86,97 @@ final class HotkeyMonitor {
             if let t = tap { CGEvent.tapEnable(tap: t, enable: true) }
             return Unmanaged.passUnretained(event)
         }
+        let pass = Unmanaged.passUnretained(event)
         let kc = event.getIntegerValueField(.keyboardEventKeycode)
         let flags = event.flags.rawValue
+        let down = Self.modifiersDown(flags)
         // 只記修飾鍵（Ctrl／Alt／Cmd 這類）的變化，絕不記一般打字的按鍵
         if type == .flagsChanged && debugCount < 20 {
             debugCount += 1
             Log.w("modifier event kc=\(kc) flags=\(String(flags, radix: 16))")
         }
 
-        // 學習模式：修飾鍵累積到全部放開才算數（才學得到組合鍵）；一般按鍵按下就算數
-        if let cap = captureNext {
-            if type == .flagsChanged {
-                guard Self.modifierBits[kc] != nil else {
-                    // Caps Lock 這類不是 device bit 的鍵，交給上層決定要不要收
-                    captureNext = nil
-                    DispatchQueue.main.async { cap([kc], false, HotkeyChoice.name(forKeyCode: kc)) }
-                    return Unmanaged.passUnretained(event)
-                }
-                let down = Self.modifiersDown(flags)
-                if down.contains(kc) && !learnedModifiers.contains(kc) { learnedModifiers.append(kc) }
-                if down.isEmpty && !learnedModifiers.isEmpty {
-                    let keys = learnedModifiers
-                    captureNext = nil
-                    DispatchQueue.main.async { cap(keys, true, HotkeyChoice.name(forKeys: keys)) }
-                }
-                return Unmanaged.passUnretained(event)
-            } else if type == .keyDown {
-                captureNext = nil
-                DispatchQueue.main.async { cap([kc], false, HotkeyChoice.name(forKeyCode: kc)) }
-                return nil
-            }
-            return Unmanaged.passUnretained(event)
-        }
+        if let cap = captureNext { return learn(type: type, kc: kc, down: down, cap: cap) ? nil : pass }
 
         if escapeArmed && kc == 53 && (type == .keyDown || type == .keyUp) {
             if type == .keyDown { DispatchQueue.main.async { self.onEscape?() } }
             return nil
         }
 
-        if !modifierKeys.isEmpty {
-            guard type == .flagsChanged else { return Unmanaged.passUnretained(event) }
-            // 組合裡每一顆都按住才算按下，任何一顆放開就算放開
-            let active = modifierKeys.isSubset(of: Self.modifiersDown(flags))
-            if active {
-                if pressedAt == nil {
-                    pressedAt = Date()
-                    DispatchQueue.main.async { self.onPress?() }
-                }
-            } else if let p = pressedAt {
-                pressedAt = nil
-                let held = Date().timeIntervalSince(p)
-                DispatchQueue.main.async { self.onRelease?(held) }
+        switch type {
+        case .flagsChanged:
+            if let a = active, a.shortcut.key == nil, !a.shortcut.modifierSet.isSubset(of: down) { release() }
+            if active == nil { matchModifiers(down) }
+            let fnOnly = bindings.contains { $0.shortcut.modifiers == [63] && $0.shortcut.key == nil }
+            return kc == 63 && fnOnly ? nil : pass
+        case .keyDown:
+            // 修飾鍵剛按齊時又按了一般鍵：使用者是在打組合字（例如 ⌥＋字母），不是要錄音
+            pending?.cancel(); pending = nil
+            if let a = active { return a.shortcut.key == kc ? nil : pass }
+            guard let b = bindings.first(where: { $0.shortcut.key == kc && $0.shortcut.modifierSet == down }) else { return pass }
+            press(b.shortcut, b.mode)
+            return nil
+        case .keyUp:
+            guard let a = active, a.shortcut.key == kc else { return pass }
+            release()
+            return nil
+        default:
+            return pass
+        }
+    }
+
+    /// 只看修飾鍵的那幾組：按下的修飾鍵要剛好等於那一組，多按一顆都不算
+    private func matchModifiers(_ down: Set<Int64>) {
+        pending?.cancel(); pending = nil
+        guard !down.isEmpty, let b = bindings.first(where: { $0.shortcut.key == nil && $0.shortcut.modifierSet == down }) else { return }
+        let longerExists = bindings.contains {
+            $0.shortcut.key == nil ? down.isStrictSubset(of: $0.shortcut.modifierSet) : down.isSubset(of: $0.shortcut.modifierSet)
+        }
+        guard longerExists else { press(b.shortcut, b.mode); return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self = self, self.active == nil else { return }
+            self.pending = nil
+            self.press(b.shortcut, b.mode)
+        }
+        pending = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.chordGrace, execute: work)
+    }
+
+    private func press(_ s: Shortcut, _ m: Mode) {
+        active = (s, Date())
+        DispatchQueue.main.async { self.onPress?(m, s) }
+    }
+
+    private func release() {
+        guard let a = active else { return }
+        active = nil
+        let held = Date().timeIntervalSince(a.since)
+        DispatchQueue.main.async { self.onRelease?(held) }
+    }
+
+    /// 學習模式。修飾鍵記下同時按住最多的那一刻，全部放開才算學到；按到一般鍵就連同當下的修飾鍵一起學。回傳 true 代表吞掉事件
+    private func learn(type: CGEventType, kc: Int64, down: Set<Int64>, cap: @escaping (Shortcut?) -> Void) -> Bool {
+        func finish(_ s: Shortcut?) {
+            captureNext = nil
+            DispatchQueue.main.async { cap(s) }
+        }
+        switch type {
+        case .flagsChanged:
+            guard Self.modifierBits[kc] != nil else {
+                // Caps Lock 這類沒有 device bit 的鍵，交給上層決定要不要收
+                finish(Shortcut(modifiers: [], key: kc))
+                return false
             }
-            if modifierKeys == [63] { return nil }
-            return Unmanaged.passUnretained(event)
-        } else {
-            guard kc == keyCode else { return Unmanaged.passUnretained(event) }
-            if type == .keyDown {
-                if pressedAt == nil {
-                    pressedAt = Date()
-                    DispatchQueue.main.async { self.onPress?() }
-                }
-                return nil
-            } else if type == .keyUp {
-                if let p = pressedAt {
-                    pressedAt = nil
-                    let held = Date().timeIntervalSince(p)
-                    DispatchQueue.main.async { self.onRelease?(held) }
-                }
-                return nil
-            }
-            return Unmanaged.passUnretained(event)
+            if down.contains(kc) && !learnOrder.contains(kc) { learnOrder.append(kc) }
+            if down.count >= learnPeak.count && !down.isEmpty { learnPeak = down }
+            if down.isEmpty && !learnPeak.isEmpty { finish(Shortcut(modifiers: learnOrder.filter(learnPeak.contains), key: nil)) }
+            return false
+        case .keyDown:
+            if kc == 53 && down.isEmpty { finish(nil); return true }
+            finish(Shortcut(modifiers: learnOrder.filter(down.contains) + down.subtracting(learnOrder).sorted(), key: kc))
+            return true
+        default:
+            return false
         }
     }
 }

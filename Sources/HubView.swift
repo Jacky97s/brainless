@@ -2,36 +2,112 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
+/// 紙與兩種墨：白底黑字、一階淺灰當表面、一種灰當次要文字；藍色只給主要動作。表面之間只靠明度差，不用框線與陰影。
 enum Theme {
     static func dyn(_ light: NSColor, _ dark: NSColor) -> Color {
         Color(nsColor: NSColor(name: nil) { app in
             app.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
         })
     }
-    static let pageBG = dyn(NSColor(white: 0.975, alpha: 1), NSColor(white: 0.11, alpha: 1))
-    static let sidebarBG = dyn(NSColor(white: 0.945, alpha: 1), NSColor(white: 0.145, alpha: 1))
-    static let card = dyn(.white, NSColor(white: 0.17, alpha: 1))
-    static let innerBG = dyn(NSColor(white: 0.965, alpha: 1), NSColor(white: 0.14, alpha: 1))
-    static let chip = dyn(.white, NSColor(white: 0.23, alpha: 1))
-    static let border = dyn(NSColor(white: 0, alpha: 0.09), NSColor(white: 1, alpha: 0.12))
-    static let selected = dyn(NSColor(white: 0.88, alpha: 1), NSColor(white: 0.25, alpha: 1))
-    static let cell = dyn(NSColor(white: 0.90, alpha: 1), NSColor(white: 0.24, alpha: 1))
-    static let accent = Color(red: 0.33, green: 0.40, blue: 0.96)
-    static let green = Color(red: 0.22, green: 0.72, blue: 0.40)
-    static let orange = Color(red: 0.95, green: 0.60, blue: 0.20)
+    private static func hex(_ v: UInt32) -> NSColor {
+        NSColor(srgbRed: CGFloat(v >> 16 & 0xff) / 255, green: CGFloat(v >> 8 & 0xff) / 255, blue: CGFloat(v & 0xff) / 255, alpha: 1)
+    }
+    static let page = dyn(hex(0xffffff), hex(0x161616))
+    static let surface = dyn(hex(0xf4f4f4), hex(0x222222))
+    static let surfaceHi = dyn(hex(0xe9e9e9), hex(0x2e2e2e))
+    static let ink = dyn(hex(0x111111), hex(0xf2f2f2))
+    static let muted = dyn(hex(0x6b6b6b), hex(0x9b9b9b))
+    static let accent = dyn(hex(0x1a4be0), hex(0x6b8dff))
+    static let onInk = dyn(hex(0xffffff), hex(0x111111))
+    static let green = Color(red: 0.16, green: 0.62, blue: 0.33)
+    static let orange = Color(red: 0.90, green: 0.50, blue: 0.10)
+
+    static let title = Font.system(size: 26, weight: .semibold)
+    static let heading = Font.system(size: 15, weight: .semibold)
+    static let body = Font.system(size: 14)
+    static let small = Font.system(size: 12)
 }
 
+/// 一塊表面：淺一階的底，沒有框線、沒有陰影
 struct Card<Content: View>: View {
-    var padding: CGFloat = 20
+    var padding: CGFloat = 16
     let content: Content
-    init(padding: CGFloat = 20, @ViewBuilder _ c: () -> Content) { self.padding = padding; content = c() }
+    init(padding: CGFloat = 16, @ViewBuilder _ c: () -> Content) { self.padding = padding; content = c() }
     var body: some View {
         content
             .padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Theme.card)
-            .cornerRadius(14)
-            .shadow(color: .black.opacity(0.04), radius: 8, y: 2)
+            .background(Theme.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+/// 頁面的窄欄：標題＋內容，左對齊，最寬 620
+struct Page<Content: View>: View {
+    let title: String
+    var trailing: AnyView? = nil
+    let content: Content
+    init(_ title: String, trailing: AnyView? = nil, @ViewBuilder _ c: () -> Content) { self.title = title; self.trailing = trailing; content = c() }
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 36) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(title).font(Theme.title)
+                    Spacer()
+                    trailing
+                }
+                content
+            }
+            .frame(maxWidth: 620, alignment: .leading)
+            .padding(.horizontal, 48).padding(.top, 52).padding(.bottom, 48)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+/// 一節：小標＋內容
+struct Block<Content: View>: View {
+    let title: String
+    var note: String? = nil
+    let content: Content
+    init(_ title: String, note: String? = nil, @ViewBuilder _ c: () -> Content) { self.title = title; self.note = note; content = c() }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title).font(Theme.heading)
+            content
+            if let n = note { Text(n).font(Theme.small).foregroundColor(Theme.muted).fixedSize(horizontal: false, vertical: true) }
+        }
+    }
+}
+
+/// 兩端對齊的一列：左邊名稱（可帶說明），右邊值或控制項
+struct Row<Trailing: View>: View {
+    let label: String
+    var detail: String? = nil
+    let trailing: Trailing
+    init(_ label: String, detail: String? = nil, @ViewBuilder trailing: () -> Trailing) { self.label = label; self.detail = detail; self.trailing = trailing() }
+    var body: some View {
+        HStack(alignment: .center, spacing: 16) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label).font(Theme.body)
+                if let d = detail { Text(d).font(Theme.small).foregroundColor(Theme.muted).fixedSize(horizontal: false, vertical: true) }
+            }
+            Spacer(minLength: 12)
+            trailing
+        }
+        .padding(.horizontal, 14).padding(.vertical, 10)
+    }
+}
+
+/// 一組列放在同一塊表面上
+struct RowGroup<Content: View>: View {
+    let content: Content
+    init(@ViewBuilder _ c: () -> Content) { content = c() }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) { content }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }
 
@@ -39,30 +115,65 @@ struct KeyChip: View {
     let text: String
     var body: some View {
         Text(text)
-            .font(.system(size: 13, weight: .semibold))
-            .padding(.horizontal, 10).padding(.vertical, 6)
-            .background(Theme.chip)
-            .cornerRadius(7)
-            .overlay(RoundedRectangle(cornerRadius: 7).stroke(Theme.border, lineWidth: 1))
-            .shadow(color: .black.opacity(0.05), radius: 1, y: 1)
+            .font(.system(size: 12, weight: .medium))
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .background(Theme.surfaceHi)
+            .clipShape(RoundedRectangle(cornerRadius: 5))
     }
 }
 
+/// 選項：選中的是實心墨色。用 Text＋點擊而不是 Button，一頁幾十個時快很多（實測每個 Button 約 0.5 ms）
 struct ChoiceChip: View {
     let text: String
     let selected: Bool
     let action: () -> Void
     var body: some View {
-        Button(action: action) {
-            Text(text)
-                .font(.system(size: 13, weight: selected ? .semibold : .regular))
-                .padding(.horizontal, 12).padding(.vertical, 7)
-                .background(selected ? Theme.accent.opacity(0.14) : Theme.chip)
-                .foregroundColor(selected ? Theme.accent : .primary)
-                .cornerRadius(8)
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(selected ? Theme.accent.opacity(0.5) : Theme.border, lineWidth: 1))
-        }.buttonStyle(.plain)
+        Text(text)
+            .font(.system(size: 13, weight: selected ? .medium : .regular))
+            .padding(.horizontal, 12).padding(.vertical, 6)
+            .foregroundColor(selected ? Theme.onInk : Theme.ink)
+            .background(selected ? Theme.ink : Theme.surface)
+            .clipShape(Capsule())
+            .contentShape(Capsule())
+            .onTapGesture(perform: action)
+            .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+            .accessibilityAction(.default, action)
     }
+}
+
+/// 文字按鈕：次要動作，不搶主要動作的藍
+struct TextAction: View {
+    let title: String
+    var role: ButtonRole? = nil
+    let action: () -> Void
+    init(_ title: String, role: ButtonRole? = nil, action: @escaping () -> Void) { self.title = title; self.role = role; self.action = action }
+    var body: some View {
+        Button(title, role: role, action: action).buttonStyle(.plain).font(Theme.small)
+            .foregroundColor(role == .destructive ? Theme.orange : Theme.muted)
+    }
+}
+
+/// 開關：自己畫，不用原生 Toggle（一頁五個原生開關加 Picker 實測要 20 ms）
+struct Switch: View {
+    let on: Bool
+    let set: (Bool) -> Void
+    var body: some View {
+        ZStack(alignment: on ? .trailing : .leading) {
+            Capsule().fill(on ? Theme.ink : Theme.surfaceHi).frame(width: 34, height: 20)
+            Circle().fill(on ? Theme.onInk : Theme.page).frame(width: 16, height: 16).padding(2)
+        }
+        .contentShape(Capsule())
+        .onTapGesture { set(!on) }
+        .accessibilityElement()
+        .accessibilityAddTraits(.isButton)
+        .accessibilityValue(on ? "開" : "關")
+        .accessibilityAction { set(!on) }
+    }
+}
+
+struct StatusDot: View {
+    let ok: Bool
+    var body: some View { Circle().fill(ok ? Theme.green : Theme.orange).frame(width: 7, height: 7) }
 }
 
 // MARK: - 主視窗
@@ -75,8 +186,7 @@ struct HubView: View {
     var body: some View {
         HStack(spacing: 0) {
             Sidebar(model: model)
-            ZStack(alignment: .topLeading) {
-                Theme.pageBG.ignoresSafeArea()
+            SwiftUI.Group {
                 switch model.page {
                 case .home: HomePage(model: model, history: history)
                 case .history: HistoryPage(model: model, history: history)
@@ -84,135 +194,97 @@ struct HubView: View {
                 case .settings: SettingsPage(model: model)
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(Theme.page)
         }
-        .frame(minWidth: 1000, minHeight: 660)
+        .foregroundColor(Theme.ink)
+        .frame(minWidth: 860, minHeight: 600)
     }
 }
 
 struct Sidebar: View {
     @ObservedObject var model: HubModel
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Image(systemName: "waveform").font(.system(size: 18, weight: .bold))
-                Text(AppInfo.name).font(.system(size: 17, weight: .bold))
-                Text("本地").font(.system(size: 10, weight: .semibold))
-                    .padding(.horizontal, 6).padding(.vertical, 3)
-                    .background(Theme.selected).cornerRadius(5)
-            }
-            .padding(.leading, 12).padding(.top, 44).padding(.bottom, 14)
+        VStack(alignment: .leading, spacing: 2) {
+            Text(AppInfo.name).font(.system(size: 17, weight: .semibold))
+                .padding(.leading, 10).padding(.top, 48).padding(.bottom, 20)
             ForEach(HubModel.Page.allCases, id: \.self) { p in
-                Button(action: { model.page = p }) {
-                    HStack(spacing: 12) {
-                        Image(systemName: p.icon).frame(width: 18)
-                        Text(p.title).font(.system(size: 14, weight: .medium))
-                        Spacer()
-                    }
-                    .padding(.horizontal, 12).padding(.vertical, 10)
-                    .background(model.page == p ? Theme.selected : Color.clear)
-                    .cornerRadius(10)
-                }.buttonStyle(.plain)
+                HStack(spacing: 10) {
+                    Image(systemName: p.icon).frame(width: 18)
+                    Text(p.title).font(Theme.body)
+                    Spacer()
+                }
+                .padding(.horizontal, 10).padding(.vertical, 8)
+                .background(model.page == p ? Theme.surfaceHi : Color.clear)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .contentShape(Rectangle())
+                .onTapGesture { model.page = p }
+                .accessibilityAddTraits(model.page == p ? [.isButton, .isSelected] : .isButton)
             }
             Spacer()
-            VStack(alignment: .leading, spacing: 6) {
-                Image(systemName: "lock.shield").foregroundColor(Theme.accent).font(.system(size: 18))
-                Text("免登入・免訂閱・全本地").font(.system(size: 12, weight: .bold))
-                Text("語音辨識與 AI 全部在本機執行，不上傳任何資料。").font(.system(size: 11)).foregroundColor(.secondary)
-            }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Theme.card).cornerRadius(12)
-            .shadow(color: .black.opacity(0.04), radius: 6, y: 2)
+            Text(model.privacyLine).font(Theme.small).foregroundColor(Theme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 10).padding(.bottom, 16)
         }
-        .padding(12)
-        .frame(width: 230)
-        .background(Theme.sidebarBG)
+        .padding(10)
+        .frame(width: 210)
+        .background(Theme.surface)
     }
 }
 
 // MARK: - 首頁
 
-struct StatTile: View {
-    let value: String
-    let unit: String
-    let label: String
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(value).font(.system(size: 40, weight: .bold))
-                Text(unit).font(.system(size: 13, weight: .semibold))
-            }
-            Text(label).font(.system(size: 13)).foregroundColor(.secondary)
-        }
-        .padding(20)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.card).cornerRadius(12)
-        .shadow(color: .black.opacity(0.03), radius: 6, y: 2)
-    }
-}
-
 struct Heatmap: View {
     let counts: [Date: Int]
     private let weeks = 24
-    private var cal: Calendar { var c = Calendar.current; c.firstWeekday = 1; return c }
+    private static let cal: Calendar = { var c = Calendar.current; c.firstWeekday = 1; return c }()
+    private static let monthFmt: DateFormatter = {
+        let f = DateFormatter(); f.locale = Locale(identifier: "zh_Hant"); f.dateFormat = "M月"; return f
+    }()
 
-    private var start: Date {
-        let today = cal.startOfDay(for: Date())
-        let wd = cal.component(.weekday, from: today) - 1 // 0 = Sunday
-        return cal.date(byAdding: .day, value: -((weeks - 1) * 7 + wd), to: today)!
-    }
-    private func date(col: Int, row: Int) -> Date {
-        cal.date(byAdding: .day, value: col * 7 + row, to: start)!
-    }
-    private func color(_ n: Int, future: Bool) -> Color {
-        if future { return Color.clear }
-        switch n {
-        case 0: return Theme.cell
-        case 1...2: return Theme.accent.opacity(0.35)
-        case 3...5: return Theme.accent.opacity(0.6)
-        default: return Theme.accent
-        }
-    }
-    private func monthLabel(col: Int) -> String? {
-        let d = date(col: col, row: 0)
-        let m = cal.component(.month, from: d)
-        if col == 0 { return nil }
-        let pm = cal.component(.month, from: date(col: col - 1, row: 0))
-        if m != pm {
-            let f = DateFormatter(); f.locale = Locale(identifier: "zh_Hant"); f.dateFormat = "M月"
-            return f.string(from: d)
-        }
-        return nil
-    }
     var body: some View {
+        let cal = Self.cal
         let today = cal.startOfDay(for: Date())
-        let rowLabels = ["S", "M", "T", "W", "T", "F", "S"]
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .top, spacing: 4) {
-                VStack(spacing: 4) {
-                    ForEach(0..<7, id: \.self) { r in
-                        Text(rowLabels[r]).font(.system(size: 9)).foregroundColor(.secondary).frame(width: 10, height: 13)
-                    }
-                }
+        let wd = cal.component(.weekday, from: today) - 1
+        let start = cal.date(byAdding: .day, value: -((weeks - 1) * 7 + wd), to: today)!
+        let days: [[(date: Date, n: Int)]] = (0..<weeks).map { c in
+            (0..<7).map { r in
+                let d = cal.date(byAdding: .day, value: c * 7 + r, to: start)!
+                return (d, counts[d] ?? 0)
+            }
+        }
+        let months: [String] = (0..<weeks).map { c in
+            guard c > 0 else { return "" }
+            let m = cal.component(.month, from: days[c][0].date), pm = cal.component(.month, from: days[c - 1][0].date)
+            return m != pm ? Self.monthFmt.string(from: days[c][0].date) : ""
+        }
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 3) {
                 ForEach(0..<weeks, id: \.self) { c in
-                    VStack(spacing: 4) {
+                    VStack(spacing: 3) {
                         ForEach(0..<7, id: \.self) { r in
-                            let d = date(col: c, row: r)
-                            RoundedRectangle(cornerRadius: 3)
-                                .fill(color(counts[d] ?? 0, future: d > today))
-                                .frame(width: 13, height: 13)
+                            let day = days[c][r]
+                            Rectangle().fill(color(day.n, future: day.date > today)).frame(width: 14, height: 14)
                         }
                     }
                 }
             }
-            HStack(spacing: 4) {
-                Color.clear.frame(width: 10, height: 1)
+            HStack(spacing: 3) {
                 ForEach(0..<weeks, id: \.self) { c in
-                    Text(monthLabel(col: c) ?? "").font(.system(size: 10)).foregroundColor(.secondary)
-                        .lineLimit(1).fixedSize(horizontal: true, vertical: false)
-                        .frame(width: 13, alignment: .leading)
+                    Text(months[c]).font(.system(size: 10)).foregroundColor(Theme.muted)
+                        .lineLimit(1).fixedSize().frame(width: 14, alignment: .leading)
                 }
             }
+        }
+    }
+
+    private func color(_ n: Int, future: Bool) -> Color {
+        if future { return .clear }
+        switch n {
+        case 0: return Theme.surfaceHi
+        case 1...2: return Theme.ink.opacity(0.3)
+        case 3...5: return Theme.ink.opacity(0.6)
+        default: return Theme.ink
         }
     }
 }
@@ -221,94 +293,76 @@ struct HomePage: View {
     @ObservedObject var model: HubModel
     @ObservedObject var history: HistoryStore
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                Text("說話，不要打字").font(.system(size: 44, weight: .bold))
-                if model.setupNeeded {
-                    SetupCard(model: model, downloader: model.downloader, puller: model.puller)
-                }
-                HStack(alignment: .top, spacing: 24) {
-                    VStack(alignment: .leading, spacing: 16) {
-                        Text("洞察").font(.system(size: 22, weight: .bold)).foregroundColor(.secondary)
-                        HStack(spacing: 16) {
-                            StatTile(value: "\(history.totalChars)", unit: "字", label: "口述字數")
-                            StatTile(value: "\(history.savedMinutes)", unit: "分鐘", label: "節省時間")
-                        }
-                        HStack(spacing: 16) {
-                            StatTile(value: "\(history.charsPerMinute)", unit: "每分鐘字數", label: "平均口述速度")
-                            StatTile(value: "\(Int(history.totalSeconds / 60))", unit: "分鐘", label: "總口述時間")
-                        }
-                        Card {
-                            VStack(alignment: .leading, spacing: 18) {
-                                HStack(spacing: 40) {
-                                    miniStat("\(history.activeDays)", "活躍天數")
-                                    miniStat("\(history.currentStreak)", "當前連續天數")
-                                    miniStat("\(history.longestStreak)", "最長連續天數")
-                                }
-                                Heatmap(counts: history.countsByDay)
-                            }
-                        }
+        Page("說話，不要打字") {
+            if model.setupNeeded {
+                SetupCard(model: model, downloader: model.downloader, puller: model.puller)
+            }
+            Block("快捷鍵", note: "按一下開始、再按一下結束；按住說完放開也可以。說話時按 Esc 取消。") {
+                RowGroup {
+                    ForEach(Mode.allCases, id: \.self) { m in
+                        Row(m.shortTitle, detail: note(for: m)) { ShortcutKeys(shortcuts: model.shortcuts[m] ?? []) }
                     }
-                    .padding(20)
-                    .background(Theme.innerBG).cornerRadius(16)
-                    .frame(maxWidth: .infinity)
+                }
+            }
+            Block("你的數字") {
+                let days = history.countsByDay
+                RowGroup {
+                    Row("口述字數") { figure("\(history.totalChars)", "字") }
+                    Row("省下的時間", detail: "以每分鐘打 60 字估算") { figure("\(history.savedMinutes)", "分鐘") }
+                    Row("平均口述速度") { figure("\(history.charsPerMinute)", "字／分鐘") }
+                    Row("活躍天數") { figure("\(days.count)", "天") }
+                    Row("連續天數", detail: "最長 \(history.longestStreak) 天") { figure("\(history.currentStreak)", "天") }
+                }
+                Heatmap(counts: days).padding(.top, 8)
+            }
+            Block("引擎") {
+                RowGroup {
+                    Row("語音辨識", detail: "whisper.cpp \(model.whisperModelName)") { status(model.whisperOK, model.whisperStatus) }
+                    Row("潤稿、翻譯、問任何事", detail: model.refinerLabel) { status(model.refinerOK, model.refinerStatus) }
+                    if model.usesImage {
+                        Row("模型磁碟映像") { status(model.volumeMounted, model.volumeMounted ? "已掛載" : "未掛載") }
+                    }
+                    Row("麥克風", detail: model.micName) { status(model.micStandby, model.micStandby ? "常駐中" : "休眠中") }
+                }
+            }
+            Text("\(AppInfo.name) \(AppInfo.version)").font(Theme.small).foregroundColor(Theme.muted)
+        }
+    }
 
-                    VStack(spacing: 20) {
-                        Card {
-                            VStack(alignment: .leading, spacing: 14) {
-                                shortcutRow("口述", [model.hotkey.shortLabel], note: model.mode == .dictate ? "目前模式" : "在設定裡把模式切到「聽寫」")
-                                shortcutRow("翻譯", [model.hotkey.shortLabel], note: model.mode == .translate ? "目前模式，翻成\(model.translateTarget)" : "在設定裡把模式切到「翻譯」")
-                                shortcutRow("問任何事", [model.hotkey.shortLabel], note: model.mode == .ask ? "目前模式，先選取文字再說" : "在設定裡把模式切到「問任何事」")
-                                Divider()
-                                HStack(spacing: 10) {
-                                    KeyChip(text: "Esc")
-                                    Text("說話時按下取消").font(.system(size: 13)).foregroundColor(.secondary)
-                                }
-                                Text("按一下開始、再按一下結束；按住說完放開也可以。").font(.system(size: 11)).foregroundColor(.secondary)
-                            }
-                        }
-                        Card {
-                            VStack(alignment: .leading, spacing: 14) {
-                                Text("模型狀態").font(.system(size: 15, weight: .bold))
-                                modelRow(ok: model.whisperOK, title: "whisper.cpp 語音辨識", sub: "\(model.whisperModelName)・\(model.whisperStatus)")
-                                modelRow(ok: model.refinerOK, title: "潤色／翻譯", sub: "\(model.refinerLabel)・\(model.refinerStatus)")
-                                modelRow(ok: model.refinerOK, title: "問任何事", sub: "\(model.refinerLabel)・\(model.refinerStatus)")
-                                if model.usesImage {
-                                    modelRow(ok: model.volumeMounted, title: "模型磁碟映像", sub: model.volumeMounted ? "已掛載" : "未掛載，請插上外接硬碟")
-                                }
-                                modelRow(ok: model.micStandby, title: "麥克風", sub: "\(model.micName)・\(model.micStandby ? "常駐中" : "休眠中（\(model.micKeepAlive.shortTitle)）")")
-                            }
-                        }
-                        HStack { Spacer(); Text("\(AppInfo.name) v\(AppInfo.version)").font(.system(size: 11)).foregroundColor(.secondary) }
-                    }
-                    .frame(width: 300)
+    private func note(for m: Mode) -> String {
+        switch m {
+        case .dictate: return "說話變文字"
+        case .translate: return "說母語，貼出\(model.translateTarget)"
+        case .ask: return "先選取文字再說指令"
+        }
+    }
+
+    private func figure(_ v: String, _ unit: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            Text(v).font(.system(size: 20, weight: .semibold)).monospacedDigit()
+            Text(unit).font(Theme.small).foregroundColor(Theme.muted)
+        }
+    }
+
+    private func status(_ ok: Bool, _ text: String) -> some View {
+        HStack(spacing: 6) {
+            StatusDot(ok: ok)
+            Text(text).font(Theme.small).foregroundColor(Theme.muted).lineLimit(1)
+        }
+    }
+}
+
+/// 一個模式的所有快捷鍵，每組一行
+struct ShortcutKeys: View {
+    let shortcuts: [Shortcut]
+    var body: some View {
+        if shortcuts.isEmpty {
+            Text("未設定").font(Theme.small).foregroundColor(Theme.muted)
+        } else {
+            VStack(alignment: .trailing, spacing: 6) {
+                ForEach(shortcuts, id: \.self) { sc in
+                    HStack(spacing: 4) { ForEach(sc.parts, id: \.self) { KeyChip(text: $0) } }
                 }
-            }
-            .padding(36)
-        }
-    }
-    private func miniStat(_ v: String, _ label: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text(v).font(.system(size: 30, weight: .bold))
-                Text("天").font(.system(size: 12, weight: .semibold))
-            }
-            Text(label).font(.system(size: 12)).foregroundColor(.secondary)
-        }
-    }
-    private func shortcutRow(_ title: String, _ keys: [String], note: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.system(size: 12)).foregroundColor(.secondary)
-            HStack(spacing: 8) { ForEach(keys, id: \.self) { KeyChip(text: $0) } }
-            Text(note).font(.system(size: 11)).foregroundColor(.secondary)
-        }
-    }
-    private func modelRow(ok: Bool, title: String, sub: String) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Circle().fill(ok ? Theme.green : Theme.orange).frame(width: 8, height: 8).padding(.top, 5)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(size: 13, weight: .medium))
-                Text(sub).font(.system(size: 11)).foregroundColor(.secondary)
             }
         }
     }
@@ -324,27 +378,23 @@ struct HistoryPage: View {
         let f = DateFormatter(); f.locale = Locale(identifier: "zh_Hant"); f.dateFormat = "M月d日 HH:mm"; return f
     }()
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack {
-                Text("歷史紀錄").font(.system(size: 32, weight: .bold))
-                Spacer()
-                Text("\(history.items.count) 筆").foregroundColor(.secondary)
-                Button("清除全部") { confirmClear = true }.disabled(history.items.isEmpty)
+        Page("歷史紀錄", trailing: AnyView(
+            HStack(spacing: 16) {
+                Text("\(history.items.count) 筆").font(Theme.small).foregroundColor(Theme.muted)
+                if !history.items.isEmpty { TextAction("清除全部", role: .destructive) { confirmClear = true } }
             }
+        )) {
             if history.items.isEmpty {
-                Card { Text("還沒有紀錄。按一下 \(model.hotkey.shortLabel) 說句話試試。").foregroundColor(.secondary) }
+                Text("還沒有紀錄。按一下「\(model.shortcuts[.dictate]?.first?.label ?? "快捷鍵")」說句話試試。")
+                    .font(Theme.body).foregroundColor(Theme.muted)
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 12) {
-                        ForEach(history.items) { it in
-                            HistoryRow(item: it, model: model, history: history, dateText: HistoryPage.fmt.string(from: it.date))
-                        }
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    ForEach(history.items) { it in
+                        HistoryRow(item: it, model: model, history: history, dateText: Self.fmt.string(from: it.date))
                     }
                 }
             }
-            Spacer(minLength: 0)
         }
-        .padding(36)
         .alert("刪除全部歷史紀錄？", isPresented: $confirmClear) {
             Button("刪除", role: .destructive) { history.clear() }
             Button("取消", role: .cancel) {}
@@ -360,28 +410,26 @@ struct HistoryRow: View {
     @State private var showRaw = false
     @State private var copied = false
     var body: some View {
-        Card(padding: 16) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 10) {
-                    Text(dateText).font(.system(size: 12)).foregroundColor(.secondary)
-                    Text(Mode(rawValue: item.mode)?.shortTitle ?? item.mode).font(.system(size: 11, weight: .semibold))
-                        .padding(.horizontal, 7).padding(.vertical, 3).background(Theme.selected).cornerRadius(5)
-                    Text(String(format: "%.0f 秒", item.seconds)).font(.system(size: 12)).foregroundColor(.secondary)
+        Card(padding: 14) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 14) {
+                    Text("\(dateText)・\(Mode(rawValue: item.mode)?.shortTitle ?? item.mode)・\(String(format: "%.0f 秒", item.seconds))")
+                        .font(Theme.small).foregroundColor(Theme.muted)
                     Spacer()
-                    Button(copied ? "已複製" : "複製") {
+                    TextAction(copied ? "已複製" : "複製") {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(item.finalText, forType: .string)
                         copied = true
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
                     }
-                    Button("重新潤稿") { model.onRetry?(item) }.disabled(!model.refinerOK)
-                    Button(role: .destructive) { history.delete(item.id) } label: { Image(systemName: "trash") }
+                    if model.refinerOK { TextAction("重新潤稿") { model.onRetry?(item) } }
+                    TextAction("刪除") { history.delete(item.id) }
                 }
-                Text(item.finalText).font(.system(size: 15)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                Text(item.finalText).font(Theme.body).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                 if let r = item.refined, !r.isEmpty, r != item.raw {
-                    Button(showRaw ? "隱藏原始辨識" : "看原始辨識") { showRaw.toggle() }.buttonStyle(.link).font(.system(size: 12))
+                    TextAction(showRaw ? "隱藏原始辨識" : "看原始辨識") { showRaw.toggle() }
                     if showRaw {
-                        Text(item.raw).font(.system(size: 13)).foregroundColor(.secondary).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                        Text(item.raw).font(Theme.small).foregroundColor(Theme.muted).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
@@ -396,43 +444,45 @@ struct DictionaryPage: View {
     @State private var newWord = ""
     @State private var importMessage: String?
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack {
-                Text("詞典").font(.system(size: 32, weight: .bold))
-                Spacer()
-                Button("從 Typeless 匯入") { importTypeless() }
-                Button("從檔案匯入…") { importFile() }
+        Page("詞典", trailing: AnyView(
+            HStack(spacing: 16) {
+                TextAction("從 Typeless 匯入") { importTypeless() }
+                TextAction("從檔案匯入…") { importFile() }
             }
-            if let m = importMessage { Text(m).font(.system(size: 12)).foregroundColor(.secondary) }
-            Text("把常講的專有名詞、人名、公司名、產品名放進來。辨識和潤稿時會優先用這些寫法，中英夾雜的詞最有效。")
-                .foregroundColor(.secondary).font(.system(size: 13))
-            HStack {
-                TextField("輸入一個詞，按 Enter 新增", text: $newWord)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit { dict.add(newWord); newWord = "" }
-                Button("新增") { dict.add(newWord); newWord = "" }.disabled(newWord.trimmingCharacters(in: .whitespaces).isEmpty)
+        )) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("常講的專有名詞、人名、公司名、產品名。辨識和潤稿時會優先用這些寫法，中英夾雜的詞最有效。前 30 個每次都會送給潤稿模型。")
+                    .font(Theme.body).foregroundColor(Theme.muted).fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 10) {
+                    TextField("輸入一個詞，按 Enter 新增", text: $newWord)
+                        .textFieldStyle(.plain).font(Theme.body)
+                        .padding(.horizontal, 12).padding(.vertical, 8)
+                        .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 8))
+                        .onSubmit(add)
+                    Button("新增", action: add).buttonStyle(.borderedProminent).tint(Theme.accent)
+                        .disabled(newWord.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+                if let m = importMessage { Text(m).font(Theme.small).foregroundColor(Theme.muted).fixedSize(horizontal: false, vertical: true) }
             }
             if dict.words.isEmpty {
-                Card { Text("還沒有詞。例如：AEL TECH、Sketchry、ListaDAO、Typeless").foregroundColor(.secondary) }
+                Text("還沒有詞。例如：AEL TECH、Sketchry、ListaDAO、Typeless").font(Theme.body).foregroundColor(Theme.muted)
             } else {
-                ScrollView {
-                    FlowLayout(spacing: 8) {
-                        ForEach(dict.words, id: \.self) { w in
-                            HStack(spacing: 6) {
-                                Text(w).font(.system(size: 13, weight: .medium))
-                                Button { dict.remove(w) } label: { Image(systemName: "xmark").font(.system(size: 9, weight: .bold)) }
-                                    .buttonStyle(.plain).foregroundColor(.secondary)
+                Block("\(dict.words.count) 個詞") {
+                    RowGroup {
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            ForEach(dict.words, id: \.self) { w in
+                                WordRow(word: w) { dict.remove(w) }
                             }
-                            .padding(.horizontal, 10).padding(.vertical, 6)
-                            .background(Theme.chip).cornerRadius(8)
-                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border, lineWidth: 1))
                         }
                     }
                 }
             }
-            Spacer(minLength: 0)
         }
-        .padding(36)
+    }
+
+    private func add() {
+        dict.add(newWord)
+        newWord = ""
     }
 
     private func importTypeless() {
@@ -461,23 +511,42 @@ struct DictionaryPage: View {
     }
 }
 
-/// 簡單的流式排版（詞典標籤用）
+/// 詞典的一列：詞在左，滑過時右邊出現刪除
+struct WordRow: View {
+    let word: String
+    let remove: () -> Void
+    @State private var hover = false
+    var body: some View {
+        HStack {
+            Text(word).font(Theme.body)
+            Spacer()
+            if hover { TextAction("刪除", action: remove) }
+        }
+        .padding(.horizontal, 14).padding(.vertical, 8)
+        .contentShape(Rectangle())
+        .onHover { hover = $0 }
+        .contextMenu { Button("刪除「\(word)」", role: .destructive, action: remove) }
+    }
+}
+
+/// 流式排版：每個子 view 的大小在一次排版裡只量一次
 struct FlowLayout: Layout {
     var spacing: CGFloat = 8
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let maxW = proposal.width ?? 800
+    func makeCache(subviews: Subviews) -> [CGSize] { subviews.map { $0.sizeThatFits(.unspecified) } }
+    func updateCache(_ cache: inout [CGSize], subviews: Subviews) { cache = makeCache(subviews: subviews) }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout [CGSize]) -> CGSize {
+        let maxW = proposal.width ?? 600
         var x: CGFloat = 0, y: CGFloat = 0, rowH: CGFloat = 0
-        for s in subviews {
-            let sz = s.sizeThatFits(.unspecified)
+        for sz in cache {
             if x + sz.width > maxW, x > 0 { x = 0; y += rowH + spacing; rowH = 0 }
             x += sz.width + spacing; rowH = max(rowH, sz.height)
         }
         return CGSize(width: maxW, height: y + rowH)
     }
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout [CGSize]) {
         var x = bounds.minX, y = bounds.minY, rowH: CGFloat = 0
-        for s in subviews {
-            let sz = s.sizeThatFits(.unspecified)
+        for (s, sz) in zip(subviews, cache) {
             if x + sz.width > bounds.maxX, x > bounds.minX { x = bounds.minX; y += rowH + spacing; rowH = 0 }
             s.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(sz))
             x += sz.width + spacing; rowH = max(rowH, sz.height)
@@ -490,114 +559,120 @@ struct FlowLayout: Layout {
 struct SettingsPage: View {
     @ObservedObject var model: HubModel
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                Text("設定").font(.system(size: 32, weight: .bold))
-                section("快捷鍵") {
-                    FlowLayout(spacing: 8) {
-                        ForEach(HotkeyChoice.allCases.filter { $0 != .custom }, id: \.self) { h in
-                            ChoiceChip(text: h.title, selected: model.hotkey == h) { model.onSetHotkey?(h) }
-                        }
-                        ChoiceChip(text: model.learningHotkey ? "請按下想用的鍵…" : "自訂：按下你想用的鍵", selected: model.hotkey == .custom) { model.onLearnHotkey?() }
-                    }
-                    Text("目前：\(model.hotkey.shortLabel)。Windows 鍵盤的 Alt 是 Option、Win 是 Command；按一下開始、再按一下結束。")
-                        .font(.system(size: 12)).foregroundColor(.secondary)
+        Page("設定") {
+            if model.setupNeeded {
+                SetupCard(model: model, downloader: model.downloader, puller: model.puller)
+            }
+            Block("快捷鍵", note: "幾顆修飾鍵一起按（左 Shift＋左 Option），或修飾鍵加一顆鍵（左 Option＋Space）都可以。按一下開始、再按一下結束；按住說完放開也可以。") {
+                RowGroup {
+                    ForEach(Mode.allCases, id: \.self) { m in ShortcutEditor(mode: m, model: model) }
                 }
-                section("模式") {
-                    HStack(spacing: 8) {
-                        ForEach(Mode.allCases, id: \.self) { m in
-                            ChoiceChip(text: m.title, selected: model.mode == m) { model.onSetMode?(m) }
-                        }
-                    }
-                    if model.mode == .translate {
-                        HStack(spacing: 8) {
-                            Text("翻譯成").font(.system(size: 13)).foregroundColor(.secondary)
-                            ForEach(Settings.translateTargets, id: \.self) { t in
-                                ChoiceChip(text: t, selected: model.translateTarget == t) { model.onSetTarget?(t) }
-                            }
-                        }
+            }
+            Block("翻譯成") {
+                FlowLayout(spacing: 8) {
+                    ForEach(Settings.translateTargets, id: \.self) { t in
+                        ChoiceChip(text: t, selected: model.translateTarget == t) { model.onSetTarget?(t) }
                     }
                 }
-                section("辨識語言") {
-                    HStack(spacing: 8) {
-                        ForEach(SpeechLanguage.allCases, id: \.self) { l in
-                            ChoiceChip(text: l.title, selected: model.language == l) { model.onSetLanguage?(l) }
-                        }
-                    }
-                    Text("講中英夾雜建議用自動偵測。").font(.system(size: 12)).foregroundColor(.secondary)
-                    Divider()
-                    Text("自動偵測只接受這些語言").font(.system(size: 13, weight: .medium))
-                    FlowLayout(spacing: 8) {
-                        ForEach(Settings.languageChoices, id: \.name) { c in
-                            ChoiceChip(text: c.title, selected: model.allowedLanguages.contains(c.name)) { model.onToggleAllowedLanguage?(c.name) }
-                        }
-                    }
-                    Text("Whisper 每段錄音只會猜一種語言。猜到名單外的語言（例如印地語）就自動用主要語言重辨一次。一句話裡同時混好幾種語言目前辨識不好，一次講一種最準。")
-                        .font(.system(size: 12)).foregroundColor(.secondary)
-                }
-                section("麥克風保持喚醒") {
-                    HStack(spacing: 8) {
-                        ForEach(MicKeepAlive.allCases, id: \.self) { k in
-                            ChoiceChip(text: k.title, selected: model.micKeepAlive == k) { model.onSetMicKeepAlive?(k) }
-                        }
-                    }
-                    Text("USB 麥克風閒置幾分鐘就會被系統休眠，醒來的前兩三秒是靜音。讓通道一直開著就隨按隨有聲音；代價是選單列會一直有橘色麥克風點（App 沒按快捷鍵時不存、不送任何聲音）。")
-                        .font(.system(size: 12)).foregroundColor(.secondary)
-                    HStack(spacing: 10) {
-                        Circle().fill(model.micStandby ? Theme.green : Theme.orange).frame(width: 8, height: 8)
-                        Text("目前：\(model.micStandby ? "常駐中" : "休眠中")・\(model.micName)")
+            }
+            Block("辨識語言", note: "講中英夾雜建議用自動偵測。Whisper 每段錄音只猜一種語言；猜到下面名單以外的語言，就改用主要語言（名單裡有中文就是中文）重辨一次。") {
+                FlowLayout(spacing: 8) {
+                    ForEach(SpeechLanguage.allCases, id: \.self) { l in
+                        ChoiceChip(text: l.title, selected: model.language == l) { model.onSetLanguage?(l) }
                     }
                 }
-                section("行為") {
-                    Toggle("AI 潤稿（\(model.refinerLabel) 去贅字、補標點、轉繁體）", isOn: Binding(get: { model.refine }, set: { model.onSetRefine?($0) }))
-                    Toggle("快速辨識（短句快一倍，但準確度會掉，預設關閉）", isOn: Binding(get: { model.fastWhisper }, set: { model.onSetFastWhisper?($0) }))
-                    if model.resolvedBackend == .ollama {
-                        Toggle("潤稿模型常駐記憶體（關掉的話閒置 30 分鐘會卸載，下次要多等十幾秒）", isOn: Binding(get: { model.keepModelLoaded }, set: { model.onSetKeepModelLoaded?($0) }))
+                Text("自動偵測只接受").font(Theme.small).foregroundColor(Theme.muted).padding(.top, 4)
+                FlowLayout(spacing: 8) {
+                    ForEach(Settings.languageChoices, id: \.name) { c in
+                        ChoiceChip(text: c.title, selected: model.allowedLanguages.contains(c.name)) { model.onToggleAllowedLanguage?(c.name) }
                     }
-                    Toggle("提示音", isOn: Binding(get: { model.sounds }, set: { model.onSetSounds?($0) }))
-                    Toggle("登入時自動啟動", isOn: Binding(get: { model.loginEnabled }, set: { _ in model.onToggleLogin?() }))
                 }
-                section("潤稿後端") {
-                    FlowLayout(spacing: 8) {
-                        ChoiceChip(text: "自動（偵測到的第一個）", selected: model.refineBackend.isEmpty) { model.onSetBackend?("") }
-                        ForEach(RefineBackend.allCases, id: \.self) { b in
-                            ChoiceChip(text: b.title + (model.installedBackends.contains(b) ? "" : "（未安裝）"), selected: model.refineBackend == b.rawValue) { model.onSetBackend?(b.rawValue) }
+            }
+            Block("潤稿", note: model.resolvedBackend == .ollama
+                    ? "Ollama 在這台電腦上跑模型，錄音與文字都不離開這台電腦。"
+                    : "用本機已登入的 \(model.resolvedBackend.title) CLI 潤稿，額度算在你的帳號上。錄音只在本機辨識，但逐字稿會送到它的雲端模型；要完全不離開這台電腦請選 Ollama。") {
+                FlowLayout(spacing: 8) {
+                    ChoiceChip(text: "自動", selected: model.refineBackend.isEmpty) { model.onSetBackend?("") }
+                    ForEach(RefineBackend.allCases, id: \.self) { b in
+                        ChoiceChip(text: b.title + (model.installedBackends.contains(b) ? "" : "（未安裝）"), selected: model.refineBackend == b.rawValue) { model.onSetBackend?(b.rawValue) }
+                    }
+                }
+                RowGroup {
+                    Row("AI 潤稿", detail: "去贅字、補標點、轉繁體") { toggle(model.refine) { model.onSetRefine?($0) } }
+                    Row("目前使用", detail: model.refinerLabel) {
+                        HStack(spacing: 6) {
+                            StatusDot(ok: model.refinerOK)
+                            Text(model.refinerStatus).font(Theme.small).foregroundColor(Theme.muted)
                         }
                     }
                     if model.resolvedBackend != .ollama {
-                        HStack(spacing: 8) {
-                            Text("模型").font(.system(size: 13)).foregroundColor(.secondary)
-                            TextField(model.resolvedBackend == .codex ? "留空用 codex 設定檔的預設" : "例如 haiku、sonnet", text: Binding(get: { model.agentModel }, set: { model.onSetAgentModel?($0) }))
-                                .textFieldStyle(.roundedBorder).frame(maxWidth: 240)
+                        Row("模型") {
+                            TextField(model.resolvedBackend == .codex ? "用 codex 預設" : "haiku", text: Binding(get: { model.agentModel }, set: { model.onSetAgentModel?($0) }))
+                                .textFieldStyle(.plain).multilineTextAlignment(.trailing).frame(width: 160)
                         }
-                        Text("用本機已登入的 \(model.resolvedBackend.title) CLI 潤稿，額度算在你的帳號上。錄音仍只在本機辨識，但逐字稿會送到它的雲端模型；要完全不離開這台電腦請選 Ollama。")
-                            .font(.system(size: 12)).foregroundColor(.secondary)
-                    }
-                }
-                section("模型") {
-                    HStack(spacing: 10) { Circle().fill(model.whisperOK ? Theme.green : Theme.orange).frame(width: 8, height: 8); Text("whisper.cpp \(model.whisperModelName)：\(model.whisperStatus)") }
-                    HStack(spacing: 10) { Circle().fill(model.refinerOK ? Theme.green : Theme.orange).frame(width: 8, height: 8); Text("潤稿 \(model.refinerLabel)：\(model.refinerStatus)") }
-                    if model.usesImage {
-                        HStack(spacing: 10) { Circle().fill(model.volumeMounted ? Theme.green : Theme.orange).frame(width: 8, height: 8); Text("模型磁碟映像：\(model.volumeMounted ? "已掛載" : "未掛載")") }
-                    }
-                    HStack {
-                        Button("重啟引擎") { model.onRestartEngines?() }
-                        Button("打開記錄檔資料夾") { model.onOpenLogs?() }
-                    }
-                    if model.setupNeeded {
-                        SetupCard(model: model, downloader: model.downloader, puller: model.puller)
+                    } else {
+                        Row("模型常駐記憶體", detail: "關掉的話閒置 30 分鐘會卸載，下次要多等十幾秒") { toggle(model.keepModelLoaded) { model.onSetKeepModelLoaded?($0) } }
                     }
                 }
             }
-            .padding(36)
+            Block("麥克風", note: "USB 麥克風閒置幾分鐘就會被系統休眠，醒來的前兩三秒是靜音。讓通道一直開著就隨按隨有聲音；代價是選單列會一直有橘色麥克風點（沒按快捷鍵時不存、不送任何聲音）。") {
+                FlowLayout(spacing: 8) {
+                    ForEach(MicKeepAlive.allCases, id: \.self) { k in
+                        ChoiceChip(text: k.title, selected: model.micKeepAlive == k) { model.onSetMicKeepAlive?(k) }
+                    }
+                }
+                HStack(spacing: 6) {
+                    StatusDot(ok: model.micStandby)
+                    Text("目前\(model.micStandby ? "常駐中" : "休眠中")・\(model.micName)").font(Theme.small).foregroundColor(Theme.muted)
+                }
+            }
+            Block("其他") {
+                RowGroup {
+                    Row("快速辨識", detail: "短句快一倍，但準確度會掉") { toggle(model.fastWhisper) { model.onSetFastWhisper?($0) } }
+                    Row("提示音") { toggle(model.sounds) { model.onSetSounds?($0) } }
+                    Row("登入時自動啟動") { toggle(model.loginEnabled) { _ in model.onToggleLogin?() } }
+                }
+                HStack(spacing: 20) {
+                    TextAction("重啟引擎") { model.onRestartEngines?() }
+                    TextAction("打開記錄檔資料夾") { model.onOpenLogs?() }
+                }
+                .padding(.top, 4)
+            }
         }
     }
-    private func section<Content: View>(_ title: String, @ViewBuilder _ c: () -> Content) -> some View {
-        Card {
-            VStack(alignment: .leading, spacing: 12) {
-                Text(title).font(.system(size: 15, weight: .bold))
-                c()
+
+    private func toggle(_ value: Bool, _ set: @escaping (Bool) -> Void) -> some View { Switch(on: value, set: set) }
+}
+
+/// 一個模式的快捷鍵：列出每一組（可刪），加一組時進入學習模式
+struct ShortcutEditor: View {
+    let mode: Mode
+    @ObservedObject var model: HubModel
+    var body: some View {
+        HStack(alignment: .top, spacing: 16) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(mode.shortTitle).font(Theme.body)
+                Text(mode.title.components(separatedBy: "：").last ?? "").font(Theme.small).foregroundColor(Theme.muted)
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 8) {
+                ForEach(model.shortcuts[mode] ?? [], id: \.self) { sc in
+                    HStack(spacing: 4) {
+                        ForEach(sc.parts, id: \.self) { KeyChip(text: $0) }
+                        Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)).foregroundColor(Theme.muted)
+                            .frame(width: 22, height: 22).contentShape(Rectangle())
+                            .onTapGesture { model.onRemoveShortcut?(mode, sc) }
+                            .help("刪除這組").accessibilityLabel("刪除 \(sc.label)").accessibilityAddTraits(.isButton)
+                    }
+                }
+                if model.learningMode == mode {
+                    Text("請按下要用的鍵或組合，Esc 取消").font(Theme.small).foregroundColor(Theme.accent)
+                } else {
+                    TextAction(model.shortcuts[mode]?.isEmpty ?? true ? "設定快捷鍵" : "再加一組") { model.onAddShortcut?(mode) }
+                        .disabled(model.learningMode != nil)
+                }
             }
         }
+        .padding(.horizontal, 14).padding(.vertical, 12)
     }
 }
