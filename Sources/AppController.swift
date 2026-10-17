@@ -397,7 +397,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             return
         }
         state = .recording
-        job = DictationJob(mode: recordingMode)
+        job = DictationJob(mode: recordingMode, target: PasteTarget.captureFrontmost())
         recordingStartedAt = Date()
         hotkey.escapeArmed = true
         playSound("Tink")
@@ -568,14 +568,17 @@ final class AppController: NSObject, NSApplicationDelegate {
         lastResult = text
         history.add(HistoryItem(date: Date(), seconds: seconds, raw: raw, refined: text == raw ? nil : text, mode: mode.rawValue))
         playSound("Glass")
-        overlay.show(.done(text))
         hotkey.escapeArmed = false
-        TextInserter.paste(text) { [weak self] in
+        TextInserter.copy(text)
+        let pastes = PasteTarget.stillFrontmost(job?.target)
+        overlay.show(pastes ? .done(text) : .info("已複製到剪貼簿（視窗已切換，沒有貼上）"))
+        let finish = { [weak self] in
             guard let self = self else { return }
             self.endJob()
             self.state = .idle
             if self.refiner.isReady && self.settings.refine { self.refiner.warmUp() }
         }
+        if pastes { TextInserter.pasteFromClipboard(completion: finish) } else { finish() }
     }
 
     private func retryRefine(_ item: HistoryItem) {
