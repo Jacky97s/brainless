@@ -459,8 +459,8 @@ final class AppController: NSObject, NSApplicationDelegate {
         let recResult = recorder.endRecording()
         applyMicKeepAlive()
         guard let rec = recResult else { fail("沒有錄到聲音"); return }
-        Log.w(String(format: "recorded %.1fs peak=%.3f", rec.seconds, rec.peak))
-        if rec.seconds < 0.7 || rec.peak < 0.004 {
+        Log.w(String(format: "recorded %.1fs peak=%.3f", rec.rawSeconds, rec.peak))
+        if rec.rawSeconds < 0.7 || rec.peak < 0.004 {
             try? FileManager.default.removeItem(at: rec.url)
             fail("沒有聽到聲音，再試一次")
             return

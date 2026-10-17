@@ -7,7 +7,10 @@ import CoreAudio
 final class AudioRecorder {
     struct Result {
         let url: URL
+        /// 去掉靜音後的長度（送進辨識的那一段）
         let seconds: Double
+        /// 實際錄了多久，太短的判斷看這個
+        let rawSeconds: Double
         let peak: Float
     }
 
@@ -151,15 +154,57 @@ final class AudioRecorder {
         samples.removeAll(keepingCapacity: true)
         lock.unlock()
         guard !data.isEmpty else { return nil }
+        let trimmed = AudioRecorder.trimSilence(data, sampleRate: 16000)
+        if trimmed.count != data.count {
+            Log.w(String(format: "trimmed %.1fs -> %.1fs", Double(data.count) / 16000, Double(trimmed.count) / 16000))
+        }
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("brainless-\(Int(Date().timeIntervalSince1970)).wav")
         do {
-            try AudioRecorder.writeWav(samples: data, sampleRate: 16000, to: url)
+            try AudioRecorder.writeWav(samples: trimmed, sampleRate: 16000, to: url)
         } catch {
             Log.w("writeWav failed: \(error)")
             return nil
         }
-        return Result(url: url, seconds: Double(data.count) / 16000.0, peak: pk)
+        return Result(url: url, seconds: Double(trimmed.count) / 16000.0, rawSeconds: Double(data.count) / 16000.0, peak: pk)
+    }
+
+    /// 去掉頭尾靜音（各留 200 ms），中間超過 600 ms 的靜音壓成 300 ms。
+    /// Whisper 的時間跟音檔長度成正比，而且長靜音容易讓它幻聽。整段都沒有聲音就原樣回傳，交給呼叫端的音量門檻判斷
+    static func trimSilence(_ samples: [Float], sampleRate: Int) -> [Float] {
+        let frame = sampleRate / 50
+        let frames = (samples.count + frame - 1) / frame
+        guard frame > 0, frames > 0 else { return samples }
+        var rms = [Float](repeating: 0, count: frames)
+        for f in 0..<frames {
+            let range = (f * frame)..<min(samples.count, (f + 1) * frame)
+            var sum: Float = 0
+            for i in range { sum += samples[i] * samples[i] }
+            rms[f] = (sum / Float(range.count)).squareRoot()
+        }
+        let threshold = max(0.004, 0.08 * (rms.max() ?? 0))
+        guard let first = rms.firstIndex(where: { $0 >= threshold }), let last = rms.lastIndex(where: { $0 >= threshold }) else { return samples }
+        let pad = sampleRate / 5 / frame
+        let longGap = sampleRate * 6 / 10 / frame
+        let keptGap = sampleRate * 3 / 10 / frame
+        var ranges: [Range<Int>] = []
+        var start = max(0, first - pad)
+        var i = first
+        while i <= last {
+            guard rms[i] < threshold else { i += 1; continue }
+            var j = i
+            while rms[j] < threshold { j += 1 }
+            if j - i > longGap {
+                ranges.append(start..<(i + keptGap / 2))
+                start = j - (keptGap - keptGap / 2)
+            }
+            i = j
+        }
+        ranges.append(start..<min(frames, last + 1 + pad))
+        var out = [Float]()
+        out.reserveCapacity(samples.count)
+        for r in ranges { out.append(contentsOf: samples[(r.lowerBound * frame)..<min(samples.count, r.upperBound * frame)]) }
+        return out
     }
 
     /// 系統目前的預設輸入裝置名稱
