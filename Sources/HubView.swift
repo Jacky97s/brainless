@@ -736,6 +736,8 @@ struct SpeechEngineBlock: View {
     @State private var urlDraft = ""
     @State private var modelDraft = ""
     @State private var keyDraft = ""
+    @State private var configTask: Task<Void, Never>?
+    @State private var keyTask: Task<Void, Never>?
 
     var body: some View {
         Block("語音辨識", note: model.speechEngine == .local
@@ -791,14 +793,40 @@ struct SpeechEngineBlock: View {
             case nil: break
             }
         }
+        .onChange(of: urlDraft) { _, _ in scheduleConfig() }
+        .onChange(of: modelDraft) { _, _ in scheduleConfig() }
+        .onChange(of: keyDraft) { _, _ in scheduleKey() }
+        .onDisappear {
+            commitConfig()
+            commitKey()
+        }
+    }
+
+    private func scheduleConfig() {
+        configTask?.cancel()
+        configTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            if !Task.isCancelled { commitConfig() }
+        }
+    }
+
+    private func scheduleKey() {
+        keyTask?.cancel()
+        guard !keyDraft.isEmpty else { return }
+        keyTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            if !Task.isCancelled { commitKey() }
+        }
     }
 
     private func commitConfig() {
+        configTask?.cancel()
         guard urlDraft != model.remoteWhisperURL || modelDraft != model.remoteWhisperModel else { return }
         model.onSetRemoteWhisper?(urlDraft, modelDraft)
     }
 
     private func commitKey() {
+        keyTask?.cancel()
         guard !keyDraft.isEmpty else { return }
         model.onSetRemoteKey?(keyDraft)
         keyDraft = ""
