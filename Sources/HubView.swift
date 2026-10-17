@@ -672,9 +672,7 @@ struct SettingsPage: View {
                     }
                 }
             }
-            Block("潤稿", note: model.resolvedBackend == .ollama
-                    ? "Ollama 在這台電腦上跑模型，潤稿的文字不離開這台電腦。"
-                    : "用本機已登入的 \(model.resolvedBackend.title) CLI 潤稿，額度算在你的帳號上。逐字稿會送到它的雲端模型；要潤稿不離開這台電腦請選 Ollama。") {
+            Block("潤稿", note: refineNote) {
                 FlowLayout(spacing: 8) {
                     ChoiceChip(text: "自動", selected: model.refineBackend.isEmpty) { model.onSetBackend?("") }
                     ForEach(RefineBackend.allCases, id: \.self) { b in
@@ -689,7 +687,11 @@ struct SettingsPage: View {
                             Text(model.refinerStatus).font(Theme.small).foregroundColor(Theme.muted)
                         }
                     }
-                    if model.resolvedBackend != .ollama {
+                    if model.resolvedBackend == .openai {
+                        EndpointRows(url: model.remoteChatURL, modelName: model.remoteChatModel, hasKey: model.hasChatKey,
+                                     urlPlaceholder: "https://api.groq.com/openai/v1", modelPlaceholder: "llama-3.3-70b-versatile", keyPlaceholder: "必填",
+                                     onSetConfig: { model.onSetRemoteChat?($0, $1) }, onSetKey: { model.onSetChatKey?($0) })
+                    } else if model.resolvedBackend != .ollama {
                         Row("模型") {
                             TextField(model.resolvedBackend == .codex ? "用 codex 預設" : "haiku", text: Binding(get: { model.agentModel }, set: { model.onSetAgentModel?($0) }))
                                 .textFieldStyle(.plain).multilineTextAlignment(.trailing).frame(width: 160)
@@ -697,6 +699,9 @@ struct SettingsPage: View {
                     } else {
                         Row("模型常駐記憶體", detail: "關掉的話閒置 30 分鐘會卸載，下次要多等十幾秒") { toggle(model.keepModelLoaded) { model.onSetKeepModelLoaded?($0) } }
                     }
+                }
+                if model.resolvedBackend == .openai && model.chatSendsKeyInClear && model.hasChatKey {
+                    Text("這個端點不是 https，API key 會以明文傳送。").font(Theme.small).foregroundColor(Theme.muted)
                 }
             }
             Block("麥克風", note: "USB 麥克風閒置幾分鐘就會被系統休眠，醒來的前兩三秒是靜音。讓通道一直開著就隨按隨有聲音；代價是選單列會一直有橘色麥克風點（沒按快捷鍵時不存、不送任何聲音）。") {
@@ -725,20 +730,20 @@ struct SettingsPage: View {
         }
     }
 
+    private var refineNote: String {
+        switch model.resolvedBackend {
+        case .ollama: return "Ollama 在這台電腦上跑模型，潤稿的文字不離開這台電腦。"
+        case .openai: return "逐字稿會送到你設定的端點（\(model.chatHost.isEmpty ? "尚未設定" : model.chatHost)），不是這台電腦；API Key 存在 macOS 鑰匙圈。Groq、OpenRouter、OpenAI 或任何 OpenAI 相容的服務都可以，不會被「自動」選到。"
+        case .claude, .codex: return "用本機已登入的 \(model.resolvedBackend.title) CLI 潤稿，額度算在你的帳號上。逐字稿會送到它的雲端模型；要潤稿不離開這台電腦請選 Ollama。"
+        }
+    }
+
     private func toggle(_ value: Bool, _ set: @escaping (Bool) -> Void) -> some View { Switch(on: value, set: set) }
 }
 
-/// 語音辨識跑在本機或遠端。文字欄位用草稿，送出或離開欄位才提交，因為每次提交都會重跑連線檢查
+/// 語音辨識跑在本機或遠端
 struct SpeechEngineBlock: View {
     @ObservedObject var model: HubModel
-    private enum Field { case url, model, key }
-    @FocusState private var focus: Field?
-    @State private var urlDraft = ""
-    @State private var modelDraft = ""
-    @State private var keyDraft = ""
-    @State private var configTask: Task<Void, Never>?
-    @State private var keyTask: Task<Void, Never>?
-
     var body: some View {
         Block("語音辨識", note: model.speechEngine == .local
                 ? "預設在這台電腦上跑 whisper.cpp。遠端要自己提供 OpenAI 相容的端點（Groq、OpenAI、speaches、whisper.cpp server 都可以）。"
@@ -749,26 +754,9 @@ struct SpeechEngineBlock: View {
             }
             if model.speechEngine == .remote {
                 RowGroup {
-                    Row("端點") {
-                        TextField("https://api.groq.com/openai/v1", text: $urlDraft)
-                            .focused($focus, equals: .url).onSubmit(commitConfig)
-                            .textFieldStyle(.plain).multilineTextAlignment(.trailing).frame(width: 280)
-                    }
-                    Row("模型") {
-                        TextField("whisper-large-v3", text: $modelDraft)
-                            .focused($focus, equals: .model).onSubmit(commitConfig)
-                            .textFieldStyle(.plain).multilineTextAlignment(.trailing).frame(width: 280)
-                    }
-                    Row("API Key") {
-                        HStack(spacing: 12) {
-                            if model.hasRemoteKey && keyDraft.isEmpty {
-                                TextAction("清除") { model.onSetRemoteKey?("") }
-                            }
-                            SecureField(model.hasRemoteKey ? "已儲存" : "選填", text: $keyDraft)
-                                .focused($focus, equals: .key).onSubmit(commitKey)
-                                .textFieldStyle(.plain).multilineTextAlignment(.trailing).frame(width: 200)
-                        }
-                    }
+                    EndpointRows(url: model.remoteWhisperURL, modelName: model.remoteWhisperModel, hasKey: model.hasRemoteKey,
+                                 urlPlaceholder: "https://api.groq.com/openai/v1", modelPlaceholder: "whisper-large-v3", keyPlaceholder: "選填",
+                                 onSetConfig: { model.onSetRemoteWhisper?($0, $1) }, onSetKey: { model.onSetRemoteKey?($0) })
                     Row("狀態") {
                         HStack(spacing: 6) {
                             StatusDot(ok: model.whisperOK)
@@ -782,9 +770,53 @@ struct SpeechEngineBlock: View {
                 }
             }
         }
+    }
+}
+
+/// 端點、模型、API Key 三列。文字欄位用草稿，送出或離開欄位才提交（打字停頓也會提交），因為每次提交都會重跑連線檢查
+struct EndpointRows: View {
+    let url: String
+    let modelName: String
+    let hasKey: Bool
+    let urlPlaceholder: String
+    let modelPlaceholder: String
+    let keyPlaceholder: String
+    let onSetConfig: (_ url: String, _ model: String) -> Void
+    let onSetKey: (String) -> Void
+    private enum Field { case url, model, key }
+    @FocusState private var focus: Field?
+    @State private var urlDraft = ""
+    @State private var modelDraft = ""
+    @State private var keyDraft = ""
+    @State private var configTask: Task<Void, Never>?
+    @State private var keyTask: Task<Void, Never>?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Row("端點") {
+                TextField(urlPlaceholder, text: $urlDraft)
+                    .focused($focus, equals: .url).onSubmit(commitConfig)
+                    .textFieldStyle(.plain).multilineTextAlignment(.trailing).frame(width: 280)
+            }
+            Row("模型") {
+                TextField(modelPlaceholder, text: $modelDraft)
+                    .focused($focus, equals: .model).onSubmit(commitConfig)
+                    .textFieldStyle(.plain).multilineTextAlignment(.trailing).frame(width: 280)
+            }
+            Row("API Key") {
+                HStack(spacing: 12) {
+                    if hasKey && keyDraft.isEmpty {
+                        TextAction("清除") { onSetKey("") }
+                    }
+                    SecureField(hasKey ? "已儲存" : keyPlaceholder, text: $keyDraft)
+                        .focused($focus, equals: .key).onSubmit(commitKey)
+                        .textFieldStyle(.plain).multilineTextAlignment(.trailing).frame(width: 200)
+                }
+            }
+        }
         .onAppear {
-            urlDraft = model.remoteWhisperURL
-            modelDraft = model.remoteWhisperModel
+            urlDraft = url
+            modelDraft = modelName
         }
         .onChange(of: focus) { old, _ in
             switch old {
@@ -821,14 +853,14 @@ struct SpeechEngineBlock: View {
 
     private func commitConfig() {
         configTask?.cancel()
-        guard urlDraft != model.remoteWhisperURL || modelDraft != model.remoteWhisperModel else { return }
-        model.onSetRemoteWhisper?(urlDraft, modelDraft)
+        guard urlDraft != url || modelDraft != modelName else { return }
+        onSetConfig(urlDraft, modelDraft)
     }
 
     private func commitKey() {
         keyTask?.cancel()
         guard !keyDraft.isEmpty else { return }
-        model.onSetRemoteKey?(keyDraft)
+        onSetKey(keyDraft)
         keyDraft = ""
     }
 }

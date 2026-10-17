@@ -150,13 +150,26 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
         hub.onSetRemoteKey = { [weak self] key in
             guard let self = self else { return }
-            let status = self.settings.setRemoteKey(key)
+            let status = self.settings.whisperKey.set(key)
             guard status == errSecSuccess else {
                 self.overlay.show(.error("API key 存不進鑰匙圈（\(status)）"))
                 self.syncHub()
                 return
             }
             self.restartTranscriber()
+        }
+        hub.onSetRemoteChat = { [weak self] url, model in
+            self?.settings.remoteChatURL = url
+            self?.settings.remoteChatModel = model
+            self?.refreshRefiner()
+            self?.afterSettingsChange()
+        }
+        hub.onSetChatKey = { [weak self] key in
+            guard let self = self else { return }
+            let status = self.settings.chatKey.set(key)
+            if status != errSecSuccess { self.overlay.show(.error("API key 存不進鑰匙圈（\(status)）")) }
+            self.refreshRefiner()
+            self.afterSettingsChange()
         }
         hub.onToggleAllowedLanguage = { [weak self] name in
             guard let self = self else { return }
@@ -185,7 +198,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             switch self.refiner.backend {
             case .claude: self.settings.claudeModel = m
             case .codex: self.settings.codexModel = m
-            case .ollama: return
+            case .ollama, .openai: return
             }
             self.afterSettingsChange()
         }
@@ -222,7 +235,12 @@ final class AppController: NSObject, NSApplicationDelegate {
         hub.remoteWhisperModel = settings.remoteWhisperModel
         hub.remoteHost = settings.remoteWhisper?.baseURL.host ?? ""
         hub.remoteSendsKeyInClear = settings.remoteWhisper?.sendsKeyInClear ?? false
-        hub.hasRemoteKey = settings.cachedRemoteKey?.value != nil
+        hub.hasRemoteKey = settings.whisperKey.cached?.value != nil
+        hub.remoteChatURL = settings.remoteChatURL
+        hub.remoteChatModel = settings.remoteChatModel
+        hub.chatHost = settings.remoteChat?.baseURL.host ?? ""
+        hub.chatSendsKeyInClear = settings.remoteChat?.baseURL.carriesKeyInClear ?? false
+        hub.hasChatKey = settings.chatKey.cached?.value != nil
         hub.transcriberLabel = transcriber.label
         hub.whisperOK = transcriber.isReady
         hub.whisperStatus = transcriberStatusText()
@@ -292,8 +310,8 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func refreshRefiner() {
-        refiner.refresh { [weak self] changed in
+    private func refreshRefiner(retryKey: Bool = false) {
+        refiner.refresh(retryKey: retryKey) { [weak self] changed in
             guard let self = self else { return }
             if changed { self.rebuildMenu(); self.syncHub() }
             if self.refiner.isReady && !self.warmedUp && self.settings.refine {
@@ -312,7 +330,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         warmedUp = false
         overlay.show(.info("潤稿改用 \(refiner.label)"))
         afterSettingsChange()
-        refreshRefiner()
+        refreshRefiner(retryKey: true)
     }
 
     // MARK: - hotkey
@@ -551,12 +569,12 @@ final class AppController: NSObject, NSApplicationDelegate {
                     }
                     self.insert(out.isEmpty ? text : out, raw: text, mode: mode, seconds: seconds)
                 case .failure(let e):
-                    Log.w("refine failed: \(e)")
+                    Log.w("refine failed: \(e.localizedDescription)")
                     if mode == .dictate {
                         self.overlay.show(.info("\(who) 沒回應，先貼原文"))
                         self.insert(text, raw: text, mode: mode, seconds: seconds)
                     } else {
-                        self.fail(e.localizedDescription)
+                        self.fail(e.localizedDescription, detail: (e as? RemoteFailure)?.detail)
                     }
                 }
             }
@@ -831,7 +849,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         overlay.show(.info("已複製上一次的結果"))
     }
     @objc private func restartEnginesMenu() { restartEngines() }
-    private func restartEngines() { transcriber.stop(); mountAndStartEngines() }
+    private func restartEngines() { transcriber.stop(); mountAndStartEngines(); refreshRefiner(retryKey: true) }
     @objc private func openAccessibility() {
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
     }

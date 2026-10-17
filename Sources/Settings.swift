@@ -85,6 +85,52 @@ enum RemoteKey: Equatable {
     var value: String? { if case .key(let k) = self { return k } else { return nil } }
 }
 
+/// 鑰匙圈項目加上記憶體快取，讀鑰匙圈只發生在背景執行緒
+final class CachedSecret {
+    private static let service = "app.whispry.mac.remote-whisper"
+    private let account: String
+    private let lock = NSLock()
+    private var cache: RemoteKey?
+    private var version = 0
+
+    init(account: String) { self.account = account }
+
+    /// 只看記憶體，不碰鑰匙圈；還沒讀過時是 nil
+    var cached: RemoteKey? {
+        lock.lock(); defer { lock.unlock() }
+        return cache
+    }
+    /// 第一次（或上次讀失敗且 retryFailure）才讀鑰匙圈。讀取可能跳出存取提示而卡住，不要在主執行緒呼叫
+    func load(retryFailure: Bool = false) -> RemoteKey {
+        lock.lock()
+        let v = version
+        if let c = cache {
+            if case .unreadable = c, retryFailure {} else { lock.unlock(); return c }
+        }
+        lock.unlock()
+        let r = Keychain.get(service: Self.service, account: account)
+        let loaded: RemoteKey
+        switch r.status {
+        case errSecSuccess: loaded = r.value.map(RemoteKey.key) ?? .unreadable(errSecDecode)
+        case errSecItemNotFound: loaded = .none
+        default: loaded = .unreadable(r.status)
+        }
+        lock.lock(); defer { lock.unlock() }
+        // 讀的期間 set 已經寫過新值，以新值為準
+        if version == v { cache = loaded }
+        return cache ?? loaded
+    }
+    /// 空字串代表刪除。只有鑰匙圈寫入成功才更新記憶體裡的值
+    func set(_ key: String) -> OSStatus {
+        let status = Keychain.set(key, service: Self.service, account: account)
+        guard status == errSecSuccess else { return status }
+        lock.lock(); defer { lock.unlock() }
+        cache = key.isEmpty ? RemoteKey.none : .key(key)
+        version += 1
+        return status
+    }
+}
+
 final class Settings {
     static let shared = Settings()
     private let d = UserDefaults.standard
@@ -137,51 +183,35 @@ final class Settings {
     }
     /// 字串在這裡一次解析完；模型留白就用預設
     var remoteWhisper: RemoteWhisperConfig? {
-        var s = remoteWhisperURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        while s.hasSuffix("/") { s.removeLast() }
-        guard let url = URL(string: s), let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
-              let host = url.host, !host.isEmpty, url.user == nil, url.password == nil else { return nil }
+        guard let url = Settings.parseEndpoint(remoteWhisperURL) else { return nil }
         let model = remoteWhisperModel.trimmingCharacters(in: .whitespacesAndNewlines)
         return RemoteWhisperConfig(baseURL: url, model: model.isEmpty ? Settings.defaultRemoteModel : model)
     }
-    private static let keychainService = "app.whispry.mac.remote-whisper"
-    private let keyLock = NSLock()
-    private var keyCache: RemoteKey?
-    private var keyVersion = 0
-    /// 只看記憶體，不碰鑰匙圈；還沒讀過時是 nil
-    var cachedRemoteKey: RemoteKey? {
-        keyLock.lock(); defer { keyLock.unlock() }
-        return keyCache
+    var remoteChatURL: String {
+        get { d.string(forKey: "remoteChatURL") ?? "" }
+        set { d.set(newValue, forKey: "remoteChatURL") }
     }
-    /// 第一次（或上次讀失敗且 retryFailure）才讀鑰匙圈。讀取可能跳出存取提示而卡住，不要在主執行緒呼叫
-    func loadRemoteKey(retryFailure: Bool = false) -> RemoteKey {
-        keyLock.lock()
-        let version = keyVersion
-        if let c = keyCache {
-            if case .unreadable = c, retryFailure {} else { keyLock.unlock(); return c }
-        }
-        keyLock.unlock()
-        let r = Keychain.get(service: Settings.keychainService, account: "api-key")
-        let loaded: RemoteKey
-        switch r.status {
-        case errSecSuccess: loaded = r.value.map(RemoteKey.key) ?? .unreadable(errSecDecode)
-        case errSecItemNotFound: loaded = .none
-        default: loaded = .unreadable(r.status)
-        }
-        keyLock.lock(); defer { keyLock.unlock() }
-        // 讀的期間 setRemoteKey 已經寫過新值，以新值為準
-        if keyVersion == version { keyCache = loaded }
-        return keyCache ?? loaded
+    var remoteChatModel: String {
+        get { d.string(forKey: "remoteChatModel") ?? "" }
+        set { d.set(newValue, forKey: "remoteChatModel") }
     }
-    /// 空字串代表刪除。只有鑰匙圈寫入成功才更新記憶體裡的值
-    func setRemoteKey(_ key: String) -> OSStatus {
-        let status = Keychain.set(key, service: Settings.keychainService, account: "api-key")
-        guard status == errSecSuccess else { return status }
-        keyLock.lock(); defer { keyLock.unlock() }
-        keyCache = key.isEmpty ? RemoteKey.none : .key(key)
-        keyVersion += 1
-        return status
+    /// 潤稿沒有安全的預設模型，留白就是還沒設定
+    var remoteChat: RemoteChatConfig? {
+        let model = remoteChatModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !model.isEmpty, let url = Settings.parseEndpoint(remoteChatURL) else { return nil }
+        return RemoteChatConfig(baseURL: url, model: model)
     }
+    /// http／https、有主機、沒有帳密，結尾的斜線去掉
+    private static func parseEndpoint(_ raw: String) -> URL? {
+        var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        while s.hasSuffix("/") { s.removeLast() }
+        guard let url = URL(string: s), let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
+              let host = url.host, !host.isEmpty, url.user == nil, url.password == nil else { return nil }
+        return url
+    }
+    /// 遠端辨識與遠端潤稿各用一把 key，同一個鑰匙圈 service
+    let whisperKey = CachedSecret(account: "api-key")
+    let chatKey = CachedSecret(account: "chat-api-key")
 
     var micKeepAlive: MicKeepAlive {
         get { MicKeepAlive(rawValue: d.string(forKey: "micKeepAlive") ?? "") ?? .always }

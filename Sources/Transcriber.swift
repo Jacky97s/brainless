@@ -8,10 +8,14 @@ struct RemoteWhisperConfig: Equatable {
     let baseURL: URL   // 例如 https://api.groq.com/openai/v1，結尾沒有斜線
     let model: String  // 例如 whisper-large-v3
 
+    var sendsKeyInClear: Bool { baseURL.carriesKeyInClear }
+}
+
+extension URL {
     /// http 且不是本機迴路：API key 會以明文經過網路
-    var sendsKeyInClear: Bool {
-        guard baseURL.scheme?.lowercased() == "http" else { return false }
-        return !["127.0.0.1", "::1", "localhost"].contains(baseURL.host?.lowercased() ?? "")
+    var carriesKeyInClear: Bool {
+        guard scheme?.lowercased() == "http" else { return false }
+        return !["127.0.0.1", "::1", "localhost"].contains(host?.lowercased() ?? "")
     }
 }
 
@@ -80,7 +84,7 @@ enum WhisperHTTP {
 }
 
 /// 遠端端點回重新導向時不跟過去，Authorization 才不會被帶到別的主機
-private final class RefuseRedirects: NSObject, URLSessionTaskDelegate {
+final class RefuseRedirects: NSObject, URLSessionTaskDelegate {
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
         completionHandler(nil)
@@ -102,7 +106,7 @@ final class Transcriber {
     private var probeGeneration = 0
     var onStateChange: ((State) -> Void)?
     /// 遠端請求一律走這裡：ephemeral 不把帶 Authorization 的請求寫進磁碟快取，也不跟隨重新導向
-    private static let remoteSession = URLSession(configuration: .ephemeral, delegate: RefuseRedirects(), delegateQueue: nil)
+    static let remoteSession = URLSession(configuration: .ephemeral, delegate: RefuseRedirects(), delegateQueue: nil)
 
     init() {
         local.onStateChange = { [weak self] s in
@@ -168,7 +172,7 @@ final class Transcriber {
         let host = cfg.baseURL.host ?? "?"
         let settings = self.settings
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let key = settings.loadRemoteKey(retryFailure: !silent)
+            let key = settings.whisperKey.load(retryFailure: !silent)
             if case .unreadable(let status) = key {
                 DispatchQueue.main.async {
                     guard let self = self, gen == self.probeGeneration else { return }
@@ -200,7 +204,7 @@ final class Transcriber {
 
     private static func unreadableKeyMessage(_ status: OSStatus) -> String { "讀不到鑰匙圈裡的 API key（\(status)）" }
 
-    private static func authorize(_ req: inout URLRequest, key: String?) {
+    static func authorize(_ req: inout URLRequest, key: String?) {
         if let key = key, !key.isEmpty { req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
     }
 
@@ -239,7 +243,7 @@ final class Transcriber {
                 return {}
             }
             let key: String?
-            switch settings.cachedRemoteKey {
+            switch settings.whisperKey.cached {
             case .unreadable(let status)?:
                 completion(.failure(RemoteFailure(message: Self.unreadableKeyMessage(status))))
                 return {}

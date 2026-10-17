@@ -55,13 +55,22 @@ final class HubModel: ObservableObject {
     /// 端點是 http 且不是本機迴路
     @Published var remoteSendsKeyInClear = false
     @Published var transcriberLabel = ""
+    @Published var remoteChatURL = ""
+    @Published var remoteChatModel = ""
+    /// 解析過的潤稿端點主機名，端點還沒設好時是空字串
+    @Published var chatHost = ""
+    @Published var hasChatKey = false
+    @Published var chatSendsKeyInClear = false
     var privacyLine: String {
         let host = remoteHost.isEmpty ? "遠端端點" : remoteHost
-        switch (speechEngine, resolvedBackend == .ollama) {
-        case (.local, true): return "辨識與潤稿都在這台電腦上，不上傳任何資料。"
-        case (.local, false): return "辨識在這台電腦上；潤稿時逐字稿會經由 \(resolvedBackend.title) 送到雲端模型。"
-        case (.remote, true): return "錄音會送到 \(host) 辨識；潤稿在這台電腦上。"
-        case (.remote, false): return "錄音會送到 \(host) 辨識；潤稿時逐字稿會經由 \(resolvedBackend.title) 送到雲端模型。"
+        let speech = speechEngine == .local ? "辨識在這台電腦上" : "錄音會送到 \(host) 辨識"
+        switch resolvedBackend {
+        case .ollama:
+            return speechEngine == .local ? "辨識與潤稿都在這台電腦上，不上傳任何資料。" : "\(speech)；潤稿在這台電腦上。"
+        case .openai:
+            return "\(speech)；潤稿時逐字稿會送到 \(chatHost.isEmpty ? "你設定的端點" : chatHost)。"
+        case .claude, .codex:
+            return "\(speech)；潤稿時逐字稿會經由 \(resolvedBackend.title) 送到雲端模型。"
         }
     }
     var setupNeeded: Bool {
@@ -85,6 +94,8 @@ final class HubModel: ObservableObject {
     var onSetSpeechEngine: ((SpeechEngine) -> Void)?
     var onSetRemoteWhisper: ((_ url: String, _ model: String) -> Void)?
     var onSetRemoteKey: ((String) -> Void)?
+    var onSetRemoteChat: ((_ url: String, _ model: String) -> Void)?
+    var onSetChatKey: ((String) -> Void)?
     var onToggleAllowedLanguage: ((String) -> Void)?
     var onToggleLogin: (() -> Void)?
     var onRestartEngines: (() -> Void)?
