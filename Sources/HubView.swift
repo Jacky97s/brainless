@@ -681,6 +681,13 @@ struct SettingsPage: View {
                 }
                 RowGroup {
                     Row("AI 潤稿", detail: "去贅字、補標點、轉繁體") { toggle(model.refine) { model.onSetRefine?($0) } }
+                    Row("短句不潤稿", detail: "聽寫少於這個字數就直接貼，省下等 AI 的時間；代價是同音字、詞典裡的專有名詞不會被修正。翻譯與問任何事不受影響。") {
+                        HStack(spacing: 6) {
+                            ForEach(Settings.refineMinCharChoices, id: \.self) { n in
+                                ChoiceChip(text: n == 0 ? "關" : "\(n)", selected: model.refineMinChars == n) { model.onSetRefineMinChars?(n) }
+                            }
+                        }
+                    }
                     Row("目前使用", detail: model.refinerLabel) {
                         HStack(spacing: 6) {
                             StatusDot(ok: model.refinerOK)

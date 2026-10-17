@@ -12,6 +12,7 @@ final class HubModel: ObservableObject {
     @Published var translateTarget: String = "英文"
     @Published var language: SpeechLanguage = .auto
     @Published var refine: Bool = true
+    @Published var refineMinChars = 12
     @Published var sounds: Bool = true
     @Published var holdToTalk = false
     @Published var loginEnabled: Bool = false
@@ -86,6 +87,7 @@ final class HubModel: ObservableObject {
     var onSetTarget: ((String) -> Void)?
     var onSetLanguage: ((SpeechLanguage) -> Void)?
     var onSetRefine: ((Bool) -> Void)?
+    var onSetRefineMinChars: ((Int) -> Void)?
     var onSetSounds: ((Bool) -> Void)?
     var onSetHoldToTalk: ((Bool) -> Void)?
     var onSetMicKeepAlive: ((MicKeepAlive) -> Void)?

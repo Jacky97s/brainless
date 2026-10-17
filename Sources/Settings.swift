@@ -221,6 +221,12 @@ final class Settings {
         get { SpeechLanguage(rawValue: d.string(forKey: "language") ?? "") ?? .auto }
         set { d.set(newValue.rawValue, forKey: "language") }
     }
+    /// 聽寫的逐字稿（不含空白）少於這個字數就不送 LLM，直接貼；0 代表關掉
+    var refineMinChars: Int {
+        get { d.object(forKey: "refineMinChars") == nil ? 12 : d.integer(forKey: "refineMinChars") }
+        set { d.set(newValue, forKey: "refineMinChars") }
+    }
+    static let refineMinCharChoices = [0, 8, 12, 20, 30]
     var refine: Bool {
         get { bool("refine", default: true) }
         set { d.set(newValue, forKey: "refine") }

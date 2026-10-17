@@ -137,6 +137,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             if v && self.refiner.isReady { self.refiner.warmUp() }
             self.afterSettingsChange()
         }
+        hub.onSetRefineMinChars = { [weak self] n in self?.settings.refineMinChars = n; self?.afterSettingsChange() }
         hub.onSetHoldToTalk = { [weak self] v in self?.settings.holdToTalk = v; self?.afterSettingsChange() }
         hub.onSetSounds = { [weak self] v in self?.settings.sounds = v; self?.afterSettingsChange() }
         hub.onSetMicKeepAlive = { [weak self] k in self?.setMicKeepAlive(k) }
@@ -227,6 +228,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         hub.translateTarget = settings.translateTarget
         hub.language = settings.language
         hub.refine = settings.refine
+        hub.refineMinChars = settings.refineMinChars
         hub.sounds = settings.sounds
         hub.holdToTalk = settings.holdToTalk
         hub.loginEnabled = SMAppService.mainApp.status == .enabled
@@ -536,6 +538,12 @@ final class AppController: NSObject, NSApplicationDelegate {
     private func afterTranscript(_ text: String, mode: Mode, selection: String?, seconds: Double, job: DictationJob) {
         let needsLLM = settings.refine || mode != .dictate
         guard needsLLM else { insert(text, raw: text, mode: mode, seconds: seconds); return }
+        let chars = HistoryStore.charCount(text)
+        if mode == .dictate && chars < settings.refineMinChars {
+            Log.w("refine skipped (\(chars) chars)")
+            insert(text, raw: text, mode: mode, seconds: seconds)
+            return
+        }
         let who = refiner.backend.title
         guard refiner.isReady else {
             if mode == .dictate {
