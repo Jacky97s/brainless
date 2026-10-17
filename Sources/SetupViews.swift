@@ -12,33 +12,41 @@ struct SetupCard: View {
         Card {
             VStack(alignment: .leading, spacing: 14) {
                 Text("第一次使用：把引擎備齊").font(.system(size: 15, weight: .bold))
-                Text("語音辨識在這台電腦上跑；潤稿用本機的 Claude Code／Codex CLI，或 Ollama 跑的本地模型。").font(.system(size: 12)).foregroundColor(.secondary)
+                Text(model.speechEngine == .local ? "語音辨識在這台電腦上跑；潤稿用本機的 Claude Code／Codex CLI，或 Ollama 跑的本地模型。" : "語音辨識交給你設定的遠端端點；潤稿用本機的 Claude Code／Codex CLI，或 Ollama 跑的本地模型。").font(.system(size: 12)).foregroundColor(.secondary)
 
-                row(ok: model.whisperServerPresent, title: "whisper.cpp（語音辨識引擎）") {
-                    if !model.whisperServerPresent {
-                        HStack(spacing: 8) {
-                            Text("在「終端機」執行：").font(.system(size: 12)).foregroundColor(.secondary)
-                            Text(ModelSetup.brewCommand).font(.system(size: 12, design: .monospaced))
-                            Button(copied ? "已複製" : "複製指令") {
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(ModelSetup.brewCommand, forType: .string)
-                                copied = true
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
+                if model.speechEngine == .local {
+                    row(ok: model.whisperServerPresent, title: "whisper.cpp（語音辨識引擎）") {
+                        if !model.whisperServerPresent {
+                            HStack(spacing: 8) {
+                                Text("在「終端機」執行：").font(.system(size: 12)).foregroundColor(.secondary)
+                                Text(ModelSetup.brewCommand).font(.system(size: 12, design: .monospaced))
+                                Button(copied ? "已複製" : "複製指令") {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(ModelSetup.brewCommand, forType: .string)
+                                    copied = true
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
+                                }
+                            }
+                            Text("沒有 Homebrew 的話先到 brew.sh 安裝。").font(.system(size: 11)).foregroundColor(.secondary)
+                        }
+                    }
+                    row(ok: model.whisperModelPresent, title: "Whisper large-v3 模型（3.1 GB）") {
+                        if !model.whisperModelPresent {
+                            if downloader.running {
+                                ProgressView(value: downloader.progress).frame(maxWidth: 320)
+                                Text("下載中 \(Int(downloader.progress * 100))%").font(.system(size: 12)).foregroundColor(.secondary)
+                            } else {
+                                HStack(spacing: 8) {
+                                    Button("下載 Whisper 模型") { model.onDownloadWhisper?() }
+                                    if let e = downloader.error { Text(e).font(.system(size: 11)).foregroundColor(.red) }
+                                }
                             }
                         }
-                        Text("沒有 Homebrew 的話先到 brew.sh 安裝。").font(.system(size: 11)).foregroundColor(.secondary)
                     }
-                }
-                row(ok: model.whisperModelPresent, title: "Whisper large-v3 模型（3.1 GB）") {
-                    if !model.whisperModelPresent {
-                        if downloader.running {
-                            ProgressView(value: downloader.progress).frame(maxWidth: 320)
-                            Text("下載中 \(Int(downloader.progress * 100))%").font(.system(size: 12)).foregroundColor(.secondary)
-                        } else {
-                            HStack(spacing: 8) {
-                                Button("下載 Whisper 模型") { model.onDownloadWhisper?() }
-                                if let e = downloader.error { Text(e).font(.system(size: 11)).foregroundColor(.red) }
-                            }
+                } else {
+                    row(ok: model.whisperOK, title: "遠端語音辨識（\(model.remoteHost.isEmpty ? "尚未設定" : model.remoteHost)）") {
+                        if !model.whisperOK {
+                            Text("\(model.whisperStatus)。到設定頁的「語音辨識」填端點，或改回本機。").font(.system(size: 12)).foregroundColor(.secondary)
                         }
                     }
                 }

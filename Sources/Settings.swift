@@ -111,6 +111,32 @@ final class Settings {
         get { bool("fastWhisper", default: false) }
         set { d.set(newValue, forKey: "fastWhisper") }
     }
+    var speechEngine: SpeechEngine {
+        get { SpeechEngine(rawValue: d.string(forKey: "speechEngine") ?? "") ?? .local }
+        set { d.set(newValue.rawValue, forKey: "speechEngine") }
+    }
+    var remoteWhisperURL: String {
+        get { d.string(forKey: "remoteWhisperURL") ?? "" }
+        set { d.set(newValue, forKey: "remoteWhisperURL") }
+    }
+    static let defaultRemoteModel = "whisper-large-v3"
+    var remoteWhisperModel: String {
+        get { d.string(forKey: "remoteWhisperModel") ?? Settings.defaultRemoteModel }
+        set { d.set(newValue, forKey: "remoteWhisperModel") }
+    }
+    /// 字串在這裡一次解析完；模型留白就用預設
+    var remoteWhisper: RemoteWhisperConfig? {
+        var s = remoteWhisperURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        while s.hasSuffix("/") { s.removeLast() }
+        guard let url = URL(string: s), let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
+              let host = url.host, !host.isEmpty else { return nil }
+        let model = remoteWhisperModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        return RemoteWhisperConfig(baseURL: url, model: model.isEmpty ? Settings.defaultRemoteModel : model)
+    }
+    private static let keychainService = "app.whispry.mac.remote-whisper"
+    var remoteKey: String? { Keychain.get(service: Settings.keychainService, account: "api-key") }
+    func setRemoteKey(_ key: String) { Keychain.set(key, service: Settings.keychainService, account: "api-key") }
+
     var micKeepAlive: MicKeepAlive {
         get { MicKeepAlive(rawValue: d.string(forKey: "micKeepAlive") ?? "") ?? .always }
         set { d.set(newValue.rawValue, forKey: "micKeepAlive") }

@@ -33,7 +33,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private let settings = Settings.shared
     private let hotkey = HotkeyMonitor()
     private let recorder = AudioRecorder()
-    private let whisper = WhisperServer()
+    private let transcriber = Transcriber()
     private let refiner = RefineService()
     private let overlay = OverlayPanel()
     private let history = HistoryStore()
@@ -59,7 +59,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         rebuildMenu()
         wireHub()
 
-        whisper.onStateChange = { [weak self] s in
+        transcriber.onStateChange = { [weak self] s in
             self?.rebuildMenu()
             self?.syncHub()
             if case .failed(let msg) = s { self?.overlay.show(.error(msg)) }
@@ -67,7 +67,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         mountAndStartEngines()
         Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
             self?.refreshRefiner()
-            if self?.state == .idle { self?.whisper.checkHealth() }
+            if self?.state == .idle { self?.transcriber.checkHealth() }
         }
         Timer.scheduledTimer(withTimeInterval: 1200, repeats: true) { [weak self] _ in
             guard let self = self, self.settings.keepModelLoaded, self.settings.refine, self.refiner.isReady else { return }
@@ -91,7 +91,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         recorder.stopCapturing()
-        whisper.stop()
+        transcriber.stop()
         hotkey.stop()
     }
 
@@ -108,7 +108,7 @@ final class AppController: NSObject, NSApplicationDelegate {
                 if let err = err {
                     self.overlay.show(.error(err))
                 } else {
-                    self.whisper.start()
+                    self.transcriber.start()
                 }
                 self.refiner.refresh { _ in
                     self.rebuildMenu()
@@ -140,6 +140,13 @@ final class AppController: NSObject, NSApplicationDelegate {
         hub.onSetMicKeepAlive = { [weak self] k in self?.setMicKeepAlive(k) }
         hub.onSetKeepModelLoaded = { [weak self] v in self?.setKeepModelLoaded(v) }
         hub.onSetFastWhisper = { [weak self] v in self?.settings.fastWhisper = v; self?.afterSettingsChange() }
+        hub.onSetSpeechEngine = { [weak self] e in self?.settings.speechEngine = e; self?.restartTranscriber() }
+        hub.onSetRemoteWhisper = { [weak self] url, model in
+            self?.settings.remoteWhisperURL = url
+            self?.settings.remoteWhisperModel = model
+            self?.restartTranscriber()
+        }
+        hub.onSetRemoteKey = { [weak self] key in self?.settings.setRemoteKey(key); self?.restartTranscriber() }
         hub.onToggleAllowedLanguage = { [weak self] name in
             guard let self = self else { return }
             var a = self.settings.allowedLanguages
@@ -158,7 +165,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         hub.downloader.onDone = { [weak self] in
             guard let self = self else { return }
             self.overlay.show(.info("Whisper 模型下載完成，正在啟動引擎"))
-            self.whisper.start()
+            self.transcriber.start()
             self.syncHub()
         }
         hub.onSetBackend = { [weak self] b in self?.setBackend(b) }
@@ -185,6 +192,12 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private func afterSettingsChange() { rebuildMenu(); syncHub() }
 
+    private func restartTranscriber() {
+        transcriber.stop()
+        transcriber.start()
+        afterSettingsChange()
+    }
+
     private func syncHub() {
         hub.shortcuts = settings.shortcuts
         hub.translateTarget = settings.translateTarget
@@ -192,8 +205,14 @@ final class AppController: NSObject, NSApplicationDelegate {
         hub.refine = settings.refine
         hub.sounds = settings.sounds
         hub.loginEnabled = SMAppService.mainApp.status == .enabled
-        hub.whisperOK = whisper.isReady
-        hub.whisperStatus = whisperStatusText()
+        hub.speechEngine = settings.speechEngine
+        hub.remoteWhisperURL = settings.remoteWhisperURL
+        hub.remoteWhisperModel = settings.remoteWhisperModel
+        hub.remoteHost = settings.remoteWhisper?.baseURL.host ?? ""
+        hub.hasRemoteKey = !(settings.remoteKey ?? "").isEmpty
+        hub.transcriberLabel = transcriber.label
+        hub.whisperOK = transcriber.isReady
+        hub.whisperStatus = transcriberStatusText()
         hub.refinerOK = refiner.isReady
         hub.refinerStatus = refiner.statusText
         hub.refinerLabel = refiner.label
@@ -353,8 +372,8 @@ final class AppController: NSObject, NSApplicationDelegate {
     // MARK: - pipeline
 
     private func startRecording(shortcut: Shortcut) {
-        guard whisper.isReady else {
-            overlay.show(.error("Whisper 還沒準備好：\(whisperStatusText())"))
+        guard transcriber.isReady else {
+            overlay.show(.error("語音辨識還沒準備好：\(transcriberStatusText())"))
             return
         }
         do {
@@ -392,7 +411,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         hotkey.escapeArmed = false
         state = .transcribing
         playSound("Pop")
-        overlay.show(.transcribing)
+        overlay.show(.transcribing(transcriber.label))
         let recResult = recorder.endRecording()
         applyMicKeepAlive()
         guard let rec = recResult else { fail("沒有錄到聲音"); return }
@@ -417,7 +436,7 @@ final class AppController: NSObject, NSApplicationDelegate {
                 if text.isEmpty { self.fail("沒有辨識出文字"); return }
                 self.afterTranscript(text, mode: mode, selection: selection, seconds: seconds)
             }
-            self.whisper.transcribe(wav: rec.url, language: lang.whisperCode, prompt: prompt.isEmpty ? nil : prompt, audioContext: ctx) { result in
+            self.transcriber.transcribe(wav: rec.url, language: lang.whisperCode, prompt: prompt.isEmpty ? nil : prompt, audioContext: ctx) { result in
                 DispatchQueue.main.async {
                     switch result {
                     case .failure(let e):
@@ -428,10 +447,10 @@ final class AppController: NSObject, NSApplicationDelegate {
                         if lang == .auto, let det = r.language, !allowed.isEmpty, !allowed.contains(det) {
                             let code = self.settings.primaryLanguageCode
                             Log.w("detected '\(det)' not in allowed list, retrying as \(code)")
-                            self.overlay.show(.transcribing)
+                            self.overlay.show(.transcribing(self.transcriber.label))
                             var p2 = code == "zh" ? Prompts.whisperZhPrompt : (code == "yue" ? Prompts.whisperYuePrompt : "")
                             p2 += self.dict.whisperHint
-                            self.whisper.transcribe(wav: rec.url, language: code, prompt: p2.isEmpty ? nil : p2, audioContext: ctx) { r2 in
+                            self.transcriber.transcribe(wav: rec.url, language: code, prompt: p2.isEmpty ? nil : p2, audioContext: ctx) { r2 in
                                 DispatchQueue.main.async {
                                     switch r2 {
                                     case .failure(let e):
@@ -656,10 +675,10 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func whisperStatusText() -> String {
-        switch whisper.state {
+    private func transcriberStatusText() -> String {
+        switch transcriber.state {
         case .stopped: return "未啟動"
-        case .starting: return "載入模型中…"
+        case .starting: return transcriber.engine == .local ? "載入模型中…" : "連線中…"
         case .ready: return "就緒"
         case .failed(let m): return "失敗（\(m.replacingOccurrences(of: "\n", with: " "))）"
         }
@@ -691,7 +710,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         open.target = self
         m.addItem(open)
         m.addItem(.separator())
-        m.addItem(item("Whisper large-v3：\(whisperStatusText())", nil, enabled: false))
+        m.addItem(item("\(transcriber.label)：\(transcriberStatusText())", nil, enabled: false))
         m.addItem(item("潤稿 \(refiner.label)：\(refiner.statusText)", nil, enabled: false))
         if VolumeManager.usesImage {
             m.addItem(item("模型磁碟映像：\(VolumeManager.isMounted ? "已掛載" : "未掛載")", nil, enabled: false))
@@ -777,7 +796,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         overlay.show(.info("已複製上一次的結果"))
     }
     @objc private func restartEnginesMenu() { restartEngines() }
-    private func restartEngines() { whisper.stop(); mountAndStartEngines() }
+    private func restartEngines() { transcriber.stop(); mountAndStartEngines() }
     @objc private func openAccessibility() {
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
     }
@@ -792,9 +811,9 @@ final class AppController: NSObject, NSApplicationDelegate {
         a.messageText = "\(AppInfo.name) \(AppInfo.version)"
         a.informativeText = """
         本機語音聽寫。按一下快捷鍵說話，再按一下，整理好的文字就出現在游標那裡。
-        語音辨識：Whisper large-v3（whisper.cpp，Metal）
+        語音辨識：\(transcriber.label)
         潤稿：\(refiner.label)
-        \(refiner.backend == .ollama ? "錄音與文字都不離開這台電腦。" : "錄音只在本機辨識；潤稿時逐字稿會經由 \(refiner.backend.title) 送到它的雲端模型。")
+        \(hub.privacyLine)
         """
         a.addButton(withTitle: "好")
         a.runModal()

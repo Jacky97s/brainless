@@ -44,12 +44,29 @@ final class HubModel: ObservableObject {
     @Published var usesImage = false
     let downloader = ModelDownloader()
     let puller = OllamaPuller()
+    @Published var speechEngine: SpeechEngine = .local
+    @Published var remoteWhisperURL = ""
+    @Published var remoteWhisperModel = "whisper-large-v3"
+    /// 解析過的端點主機名，端點還沒設好時是空字串
+    @Published var remoteHost = ""
+    /// 金鑰本身不進 UI，只告訴畫面有沒有存
+    @Published var hasRemoteKey = false
+    @Published var transcriberLabel = ""
     var privacyLine: String {
-        resolvedBackend == .ollama
-            ? "辨識與潤稿都在這台電腦上，不上傳任何資料。"
-            : "辨識在這台電腦上；潤稿時逐字稿會經由 \(resolvedBackend.title) 送到雲端模型。"
+        let host = remoteHost.isEmpty ? "遠端端點" : remoteHost
+        switch (speechEngine, resolvedBackend == .ollama) {
+        case (.local, true): return "辨識與潤稿都在這台電腦上，不上傳任何資料。"
+        case (.local, false): return "辨識在這台電腦上；潤稿時逐字稿會經由 \(resolvedBackend.title) 送到雲端模型。"
+        case (.remote, true): return "錄音會送到 \(host) 辨識；潤稿在這台電腦上。"
+        case (.remote, false): return "錄音會送到 \(host) 辨識；潤稿時逐字稿會經由 \(resolvedBackend.title) 送到雲端模型。"
+        }
     }
-    var setupNeeded: Bool { !(whisperModelPresent && whisperServerPresent && refinerOK) }
+    var setupNeeded: Bool {
+        switch speechEngine {
+        case .local: return !(whisperModelPresent && whisperServerPresent && refinerOK)
+        case .remote: return !(whisperOK && refinerOK)
+        }
+    }
 
     // 由 AppController 設定的動作
     var onAddShortcut: ((Mode) -> Void)?
@@ -61,6 +78,9 @@ final class HubModel: ObservableObject {
     var onSetMicKeepAlive: ((MicKeepAlive) -> Void)?
     var onSetKeepModelLoaded: ((Bool) -> Void)?
     var onSetFastWhisper: ((Bool) -> Void)?
+    var onSetSpeechEngine: ((SpeechEngine) -> Void)?
+    var onSetRemoteWhisper: ((_ url: String, _ model: String) -> Void)?
+    var onSetRemoteKey: ((String) -> Void)?
     var onToggleAllowedLanguage: ((String) -> Void)?
     var onToggleLogin: (() -> Void)?
     var onRestartEngines: (() -> Void)?
