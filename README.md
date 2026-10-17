@@ -2,7 +2,7 @@
 
 **說話，不要打字。** macOS 語音聽寫 App：按一下快捷鍵說話，再按一下，整理好的文字就出現在游標那裡。
 
-語音辨識用 Whisper large-v3（whisper.cpp，Metal），預設在本機跑；想要更快，也可以改用遠端的 OpenAI 相容端點（Groq、OpenAI、speaches…）。潤稿、翻譯和「問任何事」交給你電腦上已登入的 AI agent CLI（Claude Code 的 `claude -p`、Codex 的 `codex exec`）；想完全離線，也可以改用 Ollama 跑 Qwen。
+語音辨識用 Whisper（whisper.cpp，Metal），預設在本機跑，可選 large-v3（最準）或 large-v3-turbo（快很多）；想要更快，也可以改用遠端的 OpenAI 相容端點（Groq、OpenAI、speaches…）。潤稿、翻譯和「問任何事」交給你電腦上已登入的 AI agent CLI（Claude Code 的 `claude -p`、Codex 的 `codex exec`）；想完全離線，也可以改用 Ollama 跑 Qwen。
 
 > Fork 自 [austin17022/brainless](https://github.com/austin17022/brainless)。這個 fork 加了 agent CLI 潤稿後端、每個模式各自的快捷鍵（含組合鍵）、從 Typeless 匯入詞典，並重新設計了主視窗。
 
@@ -24,7 +24,7 @@
 
 - Apple Silicon Mac，macOS 14 以上，記憶體 16 GB 以上。
 - 一個麥克風（Mac mini 沒有內建）。
-- 硬碟空間約 3.5 GB（Whisper 模型 3.1 GB）。
+- 硬碟空間約 3.5 GB（Whisper large-v3 模型 3.1 GB；改選 large-v3-turbo 只要 1.6 GB）。
 - 潤稿需要下列其中一個：
   - 已登入的 [Claude Code](https://code.claude.com/docs/en/quickstart)
   - 已登入的 [Codex CLI](https://github.com/openai/codex)
@@ -37,7 +37,7 @@
 3. 依照系統提示允許**麥克風**，並到 系統設定 › 隱私權與安全性 › **輔助使用** 打開 Brainless（沒有這個權限，快捷鍵不會有反應）。
 4. 主視窗會列出還缺什麼：
    - 安裝 whisper.cpp：在終端機執行 `brew install whisper-cpp`（需要 [Homebrew](https://brew.sh)）。
-   - 按「下載 Whisper 模型」（3.1 GB）。
+   - 按「下載 Whisper 模型」（預設 large-v3，3.1 GB；想要更快，先到 設定 › 語音辨識 選 large-v3-turbo，1.6 GB，解碼快很多、準確度略低一點）。
    - 潤稿：裝好 Claude Code 或 Codex CLI 並登入一次，App 會自動偵測；都沒有的話，安裝 Ollama 再按「下載 qwen3.5:9b」。
 5. 燈都綠了，游標點到任何可以打字的地方，按一下快捷鍵（預設右 Option），說話，再按一下。
 
@@ -89,7 +89,7 @@ USB 麥克風閒置幾分鐘就會被 macOS 休眠，醒來的前兩三秒是靜
 
 ## 模型放哪裡
 
-預設在 `~/Library/Application Support/Whispry/models/`。硬碟不夠的話，可以把模型放在外接硬碟上的 APFS 磁碟映像裡（exFAT 硬碟直接放會很不穩），在終端機設定：
+預設在 `~/Library/Application Support/Whispry/models/`，Whisper 檔名是 `ggml-large-v3.bin` 或 `ggml-large-v3-turbo.bin`（依設定頁選的模型）。換模型時 App 會重啟本機引擎；如果上次留下的 whisper-server 還在跑舊模型，App 只會結束命令列確實是「`-m` 指向這個資料夾、`--port` 是自己的埠」的那一個，其他程序不會動。硬碟不夠的話，可以把模型放在外接硬碟上的 APFS 磁碟映像裡（exFAT 硬碟直接放會很不穩），在終端機設定：
 
 ```
 defaults write app.whispry.mac modelImagePath -string "/Volumes/你的硬碟/BrainlessModels.sparsebundle"
@@ -160,7 +160,7 @@ SDK=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk ./build.sh
 
 **Speak, don't type.** A voice dictation app for macOS. Press a hotkey, talk, press again, and polished text lands at your cursor.
 
-Speech recognition runs locally on Whisper large-v3 (whisper.cpp, Metal) by default, or on any OpenAI-compatible remote endpoint (Groq, OpenAI, speaches, a whisper.cpp server) if you want it faster. Cleanup, translation and "ask anything" go through an AI agent CLI you are already signed in to (`claude -p` or `codex exec`), detected the way `ollama launch` finds integrations, or fully offline on Qwen via Ollama.
+Speech recognition runs locally on Whisper (whisper.cpp, Metal) by default, with a choice of large-v3 (most accurate, 3.1 GB) or large-v3-turbo (much faster to decode, 1.6 GB) under Settings › 語音辨識, or on any OpenAI-compatible remote endpoint (Groq, OpenAI, speaches, a whisper.cpp server) if you want it faster. Cleanup, translation and "ask anything" go through an AI agent CLI you are already signed in to (`claude -p` or `codex exec`), detected the way `ollama launch` finds integrations, or fully offline on Qwen via Ollama.
 
 > Forked from [austin17022/brainless](https://github.com/austin17022/brainless). This fork adds agent-CLI refine backends, per-mode shortcuts (including chords), dictionary import from Typeless, and a redesigned main window.
 
