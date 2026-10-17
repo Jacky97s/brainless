@@ -3,7 +3,8 @@ import Combine
 
 enum AppInfo {
     static let name = "Brainless"
-    static let version = "1.0.5"
+    /// 只在 Info.plist 改版本號；release.sh 也從那裡讀
+    static let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
 }
 
 struct HistoryItem: Codable, Identifiable, Equatable {
