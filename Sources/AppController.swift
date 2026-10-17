@@ -136,6 +136,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             if v && self.refiner.isReady { self.refiner.warmUp() }
             self.afterSettingsChange()
         }
+        hub.onSetHoldToTalk = { [weak self] v in self?.settings.holdToTalk = v; self?.afterSettingsChange() }
         hub.onSetSounds = { [weak self] v in self?.settings.sounds = v; self?.afterSettingsChange() }
         hub.onSetMicKeepAlive = { [weak self] k in self?.setMicKeepAlive(k) }
         hub.onSetKeepModelLoaded = { [weak self] v in self?.setKeepModelLoaded(v) }
@@ -204,6 +205,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         hub.language = settings.language
         hub.refine = settings.refine
         hub.sounds = settings.sounds
+        hub.holdToTalk = settings.holdToTalk
         hub.loginEnabled = SMAppService.mainApp.status == .enabled
         hub.speechEngine = settings.speechEngine
         hub.remoteWhisperURL = settings.remoteWhisperURL
@@ -320,7 +322,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func handleRelease(_ held: TimeInterval) {
-        if state == .recording && pressStartedRecording && held > 0.6 && Date().timeIntervalSince(recordingStartedAt) > 0.6 {
+        if settings.holdToTalk && state == .recording && pressStartedRecording && held > 0.6 && Date().timeIntervalSince(recordingStartedAt) > 0.6 {
             stopAndProcess()
         }
         pressStartedRecording = false

@@ -149,6 +149,10 @@ final class Settings {
         get { bool("refine", default: true) }
         set { d.set(newValue, forKey: "refine") }
     }
+    var holdToTalk: Bool {
+        get { bool("holdToTalk", default: false) }
+        set { d.set(newValue, forKey: "holdToTalk") }
+    }
     var sounds: Bool {
         get { bool("sounds", default: true) }
         set { d.set(newValue, forKey: "sounds") }

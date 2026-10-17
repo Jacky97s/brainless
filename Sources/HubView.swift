@@ -645,9 +645,10 @@ struct SettingsPage: View {
             if model.setupNeeded {
                 SetupCard(model: model, downloader: model.downloader, puller: model.puller)
             }
-            Block("快捷鍵", note: "幾顆修飾鍵一起按（左 Shift＋左 Option），或修飾鍵加一顆鍵（左 Option＋Space）都可以。按一下開始、再按一下結束；按住說完放開也可以。") {
+            Block("快捷鍵", note: "幾顆修飾鍵一起按（左 Shift＋左 Option），或修飾鍵加一顆鍵（左 Option＋Space）都可以。按一下開始、再按一下結束。") {
                 RowGroup {
                     ForEach(Mode.allCases, id: \.self) { m in ShortcutEditor(mode: m, model: model) }
+                    Row("按住說話", detail: "按住超過 0.6 秒、放開就結束；關掉時一律按一下開始、再按一下結束") { toggle(model.holdToTalk) { model.onSetHoldToTalk?($0) } }
                 }
             }
             SpeechEngineBlock(model: model)
