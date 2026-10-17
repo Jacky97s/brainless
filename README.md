@@ -53,13 +53,28 @@
 
 ## 潤稿後端
 
-設定 › 潤稿 預設「自動」，依序用偵測到的第一個：Claude Code → Codex → Ollama。偵測方式比照 `ollama launch`：先找 PATH（App 會向你的 shell 要 PATH，所以 nvm、`~/.local/bin` 裡的也找得到），再找各家的預設安裝位置。
+設定 › 潤稿 預設「自動」，依序用偵測到的第一個：Claude Code → Codex → Ollama。偵測方式比照 `ollama launch`：先找 PATH（App 會向你的 shell 要 PATH，所以 nvm、`~/.local/bin` 裡的也找得到），再找各家的預設安裝位置。「OpenAI 相容」不會被自動選到，要自己切過去。
 
 | 後端 | 怎麼呼叫 | 一次大約 |
 |---|---|---|
-| Claude Code | `claude -p`，預設模型 `haiku`；不給任何工具、不讀你的設定檔與 MCP、不留 session | 2–8 秒 |
+| OpenAI 相容 | 直接打 `POST <端點>/chat/completions`，temperature 0。端點留空用 Groq（`https://api.groq.com/openai/v1`），模型留空用 `llama-3.3-70b-versatile`；API Key 存在鑰匙圈 | 視供應商而定，不經過 CLI |
+| Claude Code | `claude -p`，預設模型 `haiku`；不給任何工具、不讀你的設定檔與 MCP、不留 session | 實測中位數約 8 秒，慢的時候超過 60 秒 |
 | Codex | `codex exec`，唯讀沙箱、不留 session、reasoning effort low；模型留空就用 `~/.codex/config.toml` | 5–8 秒 |
 | Ollama | 本機 HTTP API，模型常駐的話 | 1 秒內 |
+
+**短句不潤稿**：聽寫模式下，整理後少於門檻的句子直接貼上、不送 AI（預設 12 個字，可選關、8、12、20、30）。最快，代價是短句的同音錯字和詞典用詞不會被修正。翻譯和問任何事一定會送 AI。
+
+## 加速
+
+| 做法 | 效果（作者電腦上的實測） |
+|---|---|
+| 遠端辨識用 Groq | 每句 0.4–0.9 秒（本機 large-v3 約 2 秒） |
+| 本機打開「快速辨識」 | 5 秒語音：large-v3 從 2.07 秒降到 0.93 秒 |
+| 本機改用 large-v3-turbo | 2.07 秒降到 1.48 秒，偶爾會有同音錯字；加上快速辨識 0.53 秒 |
+| 潤稿改用「OpenAI 相容」 | 不經過 `claude -p`，省掉 CLI 和 Claude 服務端的排隊時間 |
+| 短句不潤稿 | 短句不送 AI，辨識完就貼 |
+
+錄音送出前會先切掉頭尾的靜音、把超過 0.6 秒的停頓壓成 0.3 秒。這讓 Whisper 比較不會在靜音上憑空生字；但在本機的預設模式下不會變快，因為 whisper.cpp 固定處理 30 秒的視窗，只有打開快速辨識時才會因此變快。
 
 agent 在一個空資料夾（`~/Library/Application Support/Whispry/agent-workdir`）裡執行，讀不到任何專案檔。用量算在你自己的 Claude／ChatGPT 帳號上。
 
@@ -69,7 +84,7 @@ agent 在一個空資料夾（`~/Library/Application Support/Whispry/agent-workd
 
 ## 遠端語音辨識
 
-本機 Whisper large-v3 要先載入 3 GB 的模型，也吃算力。想換成速度更快的遠端服務，到 設定 › 語音辨識 選「遠端（OpenAI 相容）」，填端點、模型和 API Key。任何實作了 `POST /v1/audio/transcriptions` 的服務都可以：
+本機 Whisper large-v3 要先載入 3 GB 的模型，也吃算力。想換成速度更快的遠端服務，到 設定 › 語音辨識 選「遠端（OpenAI 相容）」，填端點、模型和 API Key。端點留空就用 Groq，模型留空就用 `whisper-large-v3`。任何實作了 `POST /v1/audio/transcriptions` 的服務都可以：
 
 | 服務 | 端點 | 模型 |
 |---|---|---|
@@ -162,17 +177,19 @@ SDK=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk ./build.sh
 
 Speech recognition runs locally on Whisper (whisper.cpp, Metal) by default, with a choice of large-v3 (most accurate, 3.1 GB) or large-v3-turbo (much faster to decode, 1.6 GB) under Settings › 語音辨識, or on any OpenAI-compatible remote endpoint (Groq, OpenAI, speaches, a whisper.cpp server) if you want it faster. Cleanup, translation and "ask anything" go through an AI agent CLI you are already signed in to (`claude -p` or `codex exec`), detected the way `ollama launch` finds integrations, or fully offline on Qwen via Ollama.
 
-> Forked from [austin17022/brainless](https://github.com/austin17022/brainless). This fork adds agent-CLI refine backends, per-mode shortcuts (including chords), dictionary import from Typeless, and a redesigned main window.
+> Forked from [austin17022/brainless](https://github.com/austin17022/brainless). This fork adds agent-CLI and OpenAI-compatible refine backends, remote (Groq) speech recognition, per-mode shortcuts (including chords), dictionary import from Typeless, and a redesigned main window. See [CHANGELOG.md](CHANGELOG.md).
 
-**Features**: dictation with filler-word removal and punctuation; translation (into English, Japanese, Korean or Traditional Chinese); "ask anything" on selected text; separate shortcuts per mode, several per mode, as modifier chords (Left Shift+Left Option), modifier+key (Left Option+Space) or single keys; a personal dictionary that steers both Whisper and the refiner, importable from Typeless or a text/CSV/JSON file; local history; Esc to cancel; keep-mic-awake option for USB mics.
+**Features**: dictation with filler-word removal and punctuation; translation (into English, Japanese, Korean or Traditional Chinese); "ask anything" on selected text; separate shortcuts per mode, several per mode, as modifier chords (Left Shift+Left Option), modifier+key (Left Option+Space) or single keys; a personal dictionary that steers both Whisper and the refiner, importable from Typeless or a text/CSV/JSON file; local history; press once to start and again to finish (hold-to-talk is optional); Esc cancels at any stage, including while transcribing or refining; the result always stays on the clipboard and is pasted only if the window you started in is still in front; keep-mic-awake option for USB mics.
 
 **Requirements**: Apple Silicon, macOS 14+, 16 GB RAM, a microphone, ~3.5 GB disk, plus a signed-in [Claude Code](https://code.claude.com/docs/en/quickstart) or [Codex CLI](https://github.com/openai/codex), or [Ollama](https://ollama.com/download) (+7.6 GB, 32 GB RAM recommended) for fully offline use.
 
 **Install**: download `Brainless-x.y.z.dmg` from this repo's Releases and drag `Brainless.app` to Applications, or build it (below) if there is no release yet (upstream releases are the original app without these changes); right-click › Open the first time (ad-hoc signed), grant Microphone and Accessibility, then follow the setup list in the main window: `brew install whisper-cpp`, download the Whisper model (3.1 GB), and sign in to Claude Code or Codex (or install Ollama and pull `qwen3.5:9b`).
 
-**Remote speech recognition**: Settings › 語音辨識 › 遠端 takes an endpoint, a model and an optional API key, for example `https://api.groq.com/openai/v1` with `whisper-large-v3`, `https://api.openai.com/v1` with `whisper-1`, a speaches server (`http://host:8000/v1`) or a whisper.cpp server (`http://host:8080/v1`). The key lives in the macOS Keychain (service `app.whispry.mac.remote-whisper`), never in preferences or logs. The app probes `GET <endpoint>/models`; 401/403 means the key was rejected, redirects are not followed and count as a failure (so the key never goes to another host), any other HTTP response counts as reachable. Remote mode does not start the local whisper-server, and the fast-recognition toggle only applies locally.
+**Remote speech recognition**: Settings › 語音辨識 › 遠端 takes an endpoint (blank means Groq), a model and an API key, for example `https://api.groq.com/openai/v1` with `whisper-large-v3`, `https://api.openai.com/v1` with `whisper-1`, a speaches server (`http://host:8000/v1`) or a whisper.cpp server (`http://host:8080/v1`). The key lives in the macOS Keychain (service `app.whispry.mac.remote-whisper`), never in preferences or logs. The app probes `GET <endpoint>/models`; 401/403 means the key was rejected, redirects are not followed and count as a failure (so the key never goes to another host), any other HTTP response counts as reachable. Remote mode does not start the local whisper-server, and the fast-recognition toggle only applies locally.
 
-**Refine backends**: Settings › 潤稿 defaults to auto (first found of Claude Code → Codex → Ollama). Claude Code runs `claude -p` with `haiku`, no tools, no user settings or MCP, no session persistence; Codex runs `codex exec` in a read-only sandbox with low reasoning effort. Both run in an empty working directory. Expect a few seconds per request, versus under a second for a warm Ollama model.
+**Refine backends**: Settings › 潤稿 defaults to auto (first found of Claude Code → Codex → Ollama). Claude Code runs `claude -p` with `haiku`, no tools, no user settings or MCP, no session persistence; Codex runs `codex exec` in a read-only sandbox with low reasoning effort. Both run in an empty working directory. "OpenAI 相容" calls `POST <endpoint>/chat/completions` directly (blank endpoint means Groq, blank model means `llama-3.3-70b-versatile`) and must be chosen explicitly. Measured on the author's machine, `claude -p` had a median of about 8 s and sometimes exceeded 60 s, versus under a second for a warm Ollama model. Dictation shorter than a threshold (default 12 characters) skips the LLM entirely.
+
+**Speed**: Groq transcription took 0.4–0.9 s per utterance (local large-v3 about 2 s). Locally, 快速辨識 cut a 5 s clip from 2.07 s to 0.93 s on large-v3; large-v3-turbo took 1.48 s (0.53 s with 快速辨識) with occasional homophone errors. Silence is trimmed before transcription, which reduces hallucinations but only speeds up local Whisper when 快速辨識 is on, because whisper.cpp encodes a fixed 30 s window otherwise.
 
 **Build**: `./build.sh` with Xcode Command Line Tools only; `./release.sh` packages `build/Brainless-<version>.dmg` (version from `Info.plist`), and `./release.sh --publish` also creates the GitHub release with `gh`. If the default macOS 27 SDK fails on `@State` (missing SwiftUI macro plugin), run `SDK=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk ./build.sh`.
 
