@@ -546,6 +546,24 @@ struct DictionaryPage: View {
                 }
                 if let m = importMessage { Text(m).font(Theme.small).foregroundColor(Theme.muted).fixedSize(horizontal: false, vertical: true) }
             }
+            if !dict.learned.isEmpty {
+                Block("最近從你的修改自動學到的") {
+                    RowGroup {
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            ForEach(dict.learned, id: \.self) { c in
+                                HStack {
+                                    Text(c.from).font(Theme.body).foregroundColor(Theme.muted).strikethrough()
+                                    Image(systemName: "arrow.right").font(Theme.small).foregroundColor(Theme.muted)
+                                    Text(c.to).font(Theme.body)
+                                    Spacer()
+                                    TextAction("學錯了，移除") { dict.unlearn(c) }
+                                }
+                                .padding(.horizontal, 14).padding(.vertical, 8)
+                            }
+                        }
+                    }
+                }
+            }
             if dict.words.isEmpty {
                 Text("還沒有詞。例如：AEL TECH、Sketchry、ListaDAO、Typeless").font(Theme.body).foregroundColor(Theme.muted)
             } else {

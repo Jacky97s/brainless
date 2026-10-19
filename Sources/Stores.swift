@@ -87,10 +87,32 @@ final class HistoryStore: ObservableObject {
 /// 個人詞典：專有名詞、人名、公司名，會餵給 Whisper 與 Qwen
 final class DictionaryStore: ObservableObject {
     @Published private(set) var words: [String] = []
+    /// Terms added automatically from the user's edits, newest first, so a wrong one is easy to undo
+    @Published private(set) var learned: [Correction] = []
     private let url = Settings.supportDir.appendingPathComponent("dictionary.json")
+    private let learnedURL = Settings.supportDir.appendingPathComponent("dictionary-learned.json")
 
     init() {
         if let d = try? Data(contentsOf: url), let arr = try? JSONDecoder().decode([String].self, from: d) { words = arr }
+        if let d = try? Data(contentsOf: learnedURL), let arr = try? JSONDecoder().decode([Correction].self, from: d) { learned = arr }
+    }
+    private func saveLearned() {
+        if let d = try? JSONEncoder().encode(learned) {
+            try? d.write(to: learnedURL, options: .atomic)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: learnedURL.path)
+        }
+    }
+    func learn(_ c: Correction) {
+        guard !words.contains(c.to) else { return }
+        add(c.to)
+        learned.removeAll { $0.to == c.to }
+        learned.insert(c, at: 0)
+        if learned.count > 20 { learned.removeLast(learned.count - 20) }
+        saveLearned()
+    }
+    func unlearn(_ c: Correction) {
+        learned.removeAll { $0.to == c.to }; saveLearned()
+        remove(c.to)
     }
     private func save() {
         if let d = try? JSONEncoder().encode(words) {

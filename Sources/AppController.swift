@@ -38,6 +38,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private let overlay = OverlayPanel()
     private let history = HistoryStore()
     private let dict = DictionaryStore()
+    private let editWatcher = EditWatcher()
     private let hub = HubModel()
     private let hubWindow = HubWindowController()
     private var statusItem: NSStatusItem!
@@ -410,6 +411,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     // MARK: - pipeline
 
     private func startRecording(shortcut: Shortcut) {
+        editWatcher.finish()
         guard transcriber.isReady else {
             overlay.show(.error("語音辨識還沒準備好：\(transcriberStatusText())"))
             return
@@ -609,7 +611,34 @@ final class AppController: NSObject, NSApplicationDelegate {
             self.state = .idle
             if self.refiner.isReady && self.settings.refine { self.refiner.warmUp() }
         }
-        if pastes { TextInserter.pasteFromClipboard(completion: finish) } else { finish() }
+        guard pastes else { finish(); return }
+        let watch = mode == .ask ? nil : editWatcher.prepare()
+        TextInserter.pasteFromClipboard {
+            finish()
+            if let (element, before) = watch {
+                self.editWatcher.start(element: element, before: before, inserted: text) { [weak self] cs in
+                    self?.review(cs, context: text)
+                }
+            }
+        }
+    }
+
+    /// Every edit is a candidate; only the ones the refine model confirms as term fixes reach the dictionary.
+    private func review(_ cs: [Correction], context: String) {
+        guard !cs.isEmpty else { return }
+        guard refiner.isReady else { Log.w("edit review skipped: refiner not ready"); return }
+        for c in cs {
+            refiner.chat(system: CorrectionLearner.reviewSystem, user: CorrectionLearner.reviewUser(c, context: context)) { [weak self] result in
+                DispatchQueue.main.async {
+                    guard case .success(let reply) = result, let term = CorrectionLearner.acceptedTerm(fromReview: reply) else {
+                        Log.w("edit review rejected or failed")
+                        return
+                    }
+                    Log.w("learned a term from edits")
+                    self?.dict.learn(Correction(from: c.from, to: term))
+                }
+            }
+        }
     }
 
     private func retryRefine(_ item: HistoryItem) {
